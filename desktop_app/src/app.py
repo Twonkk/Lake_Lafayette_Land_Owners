@@ -14,6 +14,7 @@ from src.runtime import (
     resolve_app_paths,
     save_seen_screen_help,
     save_legacy_dir,
+    open_with_default_app,
 )
 from src.services.help_service import get_screen_help
 from src.services.import_service import (
@@ -22,6 +23,7 @@ from src.services.import_service import (
     run_legacy_import,
     validate_legacy_directory,
 )
+from src.services.logging_service import get_logger
 from src.ui.assessments import AssessmentsFrame
 from src.ui.cards_stickers import CardsStickersFrame
 from src.ui.dashboard import DashboardFrame
@@ -44,6 +46,7 @@ APP_SIZE = "1280x800"
 class LakeLotApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
+        self.logger = get_logger("app")
         self.title(APP_TITLE)
         self.geometry(APP_SIZE)
         self.minsize(1100, 700)
@@ -68,6 +71,7 @@ class LakeLotApp(tk.Tk):
         self.style = ttk.Style(self)
         self._configure_theme()
         self._build_shell()
+        self.logger.info("Main window initialized")
 
     def _configure_theme(self) -> None:
         self.style.theme_use("clam")
@@ -193,6 +197,7 @@ class LakeLotApp(tk.Tk):
     def _set_screen(self, title: str, frame_factory, help_key: str | None = None) -> None:
         self.screen_title_var.set(title)
         self.current_help_key = help_key
+        self.logger.info("Open screen: %s", title)
         if self.screen_container is None:
             return
         for child in self.screen_container.winfo_children():
@@ -254,6 +259,7 @@ class LakeLotApp(tk.Tk):
                 self.db_path,
                 self.refresh_from_legacy_data,
                 self.reset_screen_tutorials,
+                self.open_log_folder,
             ),
             help_key="utilities",
         )
@@ -284,9 +290,19 @@ class LakeLotApp(tk.Tk):
         try:
             result = run_legacy_import(source_dir, self.db_path)
         except Exception as exc:
+            self.logger.exception("Legacy import failed from %s", source_dir)
             messagebox.showerror("Import failed", str(exc))
             return
 
+        self.logger.info(
+            "Legacy import completed from %s: owners=%s lots=%s owner_payments=%s lot_payments=%s notes=%s",
+            source_dir,
+            result.owners_imported,
+            result.lots_imported,
+            result.owner_payments_imported,
+            result.lot_payments_imported,
+            result.notes_imported,
+        )
         self.initial_setup_required = False
         self.legacy_dir = source_dir
         save_legacy_dir(self.paths.update_config_path, source_dir)
@@ -324,7 +340,41 @@ class LakeLotApp(tk.Tk):
             self.show_help(self.current_help_key, first_time=False)
 
     def reset_screen_tutorials(self) -> None:
+        self.logger.info("Reset screen tutorials")
         reset_seen_screen_help(self.paths.update_config_path)
+
+    def open_log_folder(self) -> None:
+        try:
+            open_with_default_app(self.paths.logs_dir)
+            self.logger.info("Opened log folder: %s", self.paths.logs_dir)
+        except Exception as exc:
+            self.logger.exception("Failed to open log folder")
+            messagebox.showerror(
+                "Open log folder failed",
+                "\n".join(
+                    [
+                        "The log folder could not be opened automatically.",
+                        str(self.paths.logs_dir),
+                        "",
+                        str(exc),
+                    ]
+                ),
+            )
+
+    def report_callback_exception(self, exc, val, tb) -> None:
+        self.logger.error(
+            "Tkinter callback exception",
+            exc_info=(exc, val, tb),
+        )
+        messagebox.showerror(
+            "Unexpected error",
+            "\n".join(
+                [
+                    "The app hit an unexpected error.",
+                    "A log entry was written to the log folder for support review.",
+                ]
+            ),
+        )
 
     def show_help(self, help_key: str, first_time: bool) -> None:
         help_info = get_screen_help(help_key)

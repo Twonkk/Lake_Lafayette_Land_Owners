@@ -6,11 +6,12 @@ from src.services.utility_service import run_data_health_checks
 
 
 class UtilitiesFrame(ttk.Frame):
-    def __init__(self, parent: tk.Misc, db_path: Path, refresh_callback, reset_help_callback) -> None:
+    def __init__(self, parent: tk.Misc, db_path: Path, refresh_callback, reset_help_callback, open_logs_callback) -> None:
         super().__init__(parent, style="App.TFrame")
         self.db_path = db_path
         self.refresh_callback = refresh_callback
         self.reset_help_callback = reset_help_callback
+        self.open_logs_callback = open_logs_callback
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
 
@@ -28,6 +29,9 @@ class UtilitiesFrame(ttk.Frame):
         )
         ttk.Button(actions, text="Reset Screen Tutorials", command=self.reset_tutorials).grid(
             row=0, column=2, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(actions, text="Open Log Folder", command=self.open_logs_callback).grid(
+            row=0, column=3, sticky="w", padx=(8, 0)
         )
 
         self.output = tk.Text(

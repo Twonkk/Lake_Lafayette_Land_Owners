@@ -40,6 +40,7 @@ class AppPaths:
     install_dir: Path
     project_dir: Path
     data_dir: Path
+    logs_dir: Path
     backup_dir: Path
     notices_dir: Path
     reports_dir: Path
@@ -52,6 +53,7 @@ def resolve_app_paths() -> AppPaths:
     project_dir = _project_root()
     install_dir = Path(sys.executable).resolve().parent if is_frozen() else project_dir
     data_dir = _default_data_home() / APP_SLUG
+    logs_dir = data_dir / "logs"
     backup_dir = data_dir / "backups"
     notices_dir = data_dir / "generated_notices"
     reports_dir = data_dir / "generated_reports"
@@ -68,6 +70,7 @@ def resolve_app_paths() -> AppPaths:
         install_dir=install_dir,
         project_dir=project_dir,
         data_dir=data_dir,
+        logs_dir=logs_dir,
         backup_dir=backup_dir,
         notices_dir=notices_dir,
         reports_dir=reports_dir,
@@ -79,6 +82,7 @@ def resolve_app_paths() -> AppPaths:
 
 def ensure_runtime_dirs(paths: AppPaths) -> None:
     paths.data_dir.mkdir(parents=True, exist_ok=True)
+    paths.logs_dir.mkdir(parents=True, exist_ok=True)
     paths.backup_dir.mkdir(parents=True, exist_ok=True)
     paths.notices_dir.mkdir(parents=True, exist_ok=True)
     paths.reports_dir.mkdir(parents=True, exist_ok=True)
