@@ -124,6 +124,7 @@ class LakeLotApp(tk.Tk):
 
         sidebar = ttk.Frame(self, style="Sidebar.TFrame", padding=24)
         sidebar.grid(row=0, column=0, sticky="nsew")
+        sidebar.rowconfigure(100, weight=1)
         self.sidebar = sidebar
         content = ttk.Frame(self, style="App.TFrame", padding=24)
         content.grid(row=0, column=1, sticky="nsew")
@@ -132,17 +133,12 @@ class LakeLotApp(tk.Tk):
         content.columnconfigure(0, weight=1)
         content.rowconfigure(1, weight=1)
 
-        ttk.Label(sidebar, text="Lake Lot Manager", style="Sidebar.TLabel").grid(
+        ttk.Label(sidebar, text=APP_NAME, style="Sidebar.TLabel").grid(
             row=0,
             column=0,
             sticky="w",
             pady=(0, 24),
         )
-        ttk.Label(
-            sidebar,
-            text=f"v{APP_VERSION}",
-            style="Sidebar.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(0, 18))
 
         if self.initial_setup_required:
             buttons = [("Initial Setup", self.show_import_setup)]
@@ -169,6 +165,12 @@ class LakeLotApp(tk.Tk):
                 sticky="ew",
                 pady=6,
             )
+
+        ttk.Label(
+            sidebar,
+            text=f"v{APP_VERSION}",
+            style="Sidebar.TLabel",
+        ).grid(row=101, column=0, sticky="sw", pady=(18, 0))
 
         header = ttk.Frame(content, style="App.TFrame")
         header.grid(row=0, column=0, sticky="ew", pady=(0, 12))

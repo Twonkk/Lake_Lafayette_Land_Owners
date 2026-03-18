@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 
-APP_NAME = "Lake Lot Manager"
+APP_NAME = "Lake Lafayette Landowners Association"
 APP_SLUG = "LakeLotManager"
 APP_VERSION = "0.1.0"
 DB_FILENAME = "lake_lot.sqlite3"
