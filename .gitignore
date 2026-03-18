@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local databases and backups
+*.sqlite3
+*.db
+*.bak
+
+# Runtime output
+desktop_app/data/backups/
+desktop_app/data/generated_notices/
+desktop_app/data/generated_reports/
+desktop_app/data/*.png
+desktop_app/data/*.jpg
+desktop_app/data/*.jpeg
+desktop_app/data/*.pdf
+desktop_app/data/*.html
+desktop_app/data/*.json
+dist/
+build/
+
+# Local repo/tool noise
+scripts/.git/
+payments.png
+dbase/
+
+# Client sample and personal-information files
+print_samples/**/*.png
+print_samples/**/*.jpg
+print_samples/**/*.jpeg
+print_samples/**/*.pdf
+print_samples/**/*.tif
+print_samples/**/*.tiff
+
+# macOS / Windows noise
+.DS_Store
+Thumbs.db
