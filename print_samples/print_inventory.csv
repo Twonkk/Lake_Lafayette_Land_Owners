@@ -1,0 +1,12 @@
+sample_name,legacy_program,category,current_or_future,batch_supported,letterhead_or_form,notes
+notice_individual_current,,notice,current,no,,Individual notice example from dBase
+notice_batch_current,,notice,current,yes,,Batch notice example from dBase
+payment_receipt_current,,payment,current,no,,Receipt or payment confirmation if used
+deposit_summary_current,PAYMENTS.PRG,payment,current,yes,,Deposit slip or daily payment summary
+monthly_financial_current,PRNTMNTH.PRG,financial,current,no,,Monthly financial report
+year_end_financial_current,PRNTYEAR.PRG,financial,current,no,,Year-end financial summary
+transaction_log_current,PRNTTRAN.PRG,financial,current,no,,Transaction log printout
+budget_report_current,PRINTBUD.PRG,financial,current,no,,Budget printout
+mailing_labels_current,PRNTLABL.PRG,labels,current,yes,label stock,Mailing labels
+id_card_current,PRINTID.PRG,id_card,current,yes,card stock,ID card sample
+assessment_notice_future,NOTICE.PRG,notice,future,yes,letterhead,Target replacement format
