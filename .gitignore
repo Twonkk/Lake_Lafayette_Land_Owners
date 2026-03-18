@@ -9,6 +9,7 @@ __pycache__/
 *.bak
 
 # Runtime output
+backups/
 desktop_app/data/backups/
 desktop_app/data/generated_notices/
 desktop_app/data/generated_reports/

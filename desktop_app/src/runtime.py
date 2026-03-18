@@ -126,6 +126,28 @@ def save_legacy_dir(config_path: Path, legacy_dir: Path) -> None:
     save_update_config(config_path, payload)
 
 
+def has_seen_screen_help(config_path: Path, screen_key: str) -> bool:
+    payload = load_update_config(config_path)
+    seen = payload.get("seen_screen_help", {})
+    return bool(seen.get(screen_key))
+
+
+def save_seen_screen_help(config_path: Path, screen_key: str, seen: bool = True) -> None:
+    payload = load_update_config(config_path)
+    seen_map = payload.get("seen_screen_help", {})
+    if not isinstance(seen_map, dict):
+        seen_map = {}
+    seen_map[screen_key] = bool(seen)
+    payload["seen_screen_help"] = seen_map
+    save_update_config(config_path, payload)
+
+
+def reset_seen_screen_help(config_path: Path) -> None:
+    payload = load_update_config(config_path)
+    payload["seen_screen_help"] = {}
+    save_update_config(config_path, payload)
+
+
 def open_with_default_app(path: Path) -> None:
     target = Path(path)
     if sys.platform == "win32":

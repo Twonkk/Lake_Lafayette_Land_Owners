@@ -9,9 +9,13 @@ from src.runtime import (
     APP_VERSION,
     bootstrap_existing_local_database,
     ensure_runtime_dirs,
+    has_seen_screen_help,
+    reset_seen_screen_help,
     resolve_app_paths,
+    save_seen_screen_help,
     save_legacy_dir,
 )
+from src.services.help_service import get_screen_help
 from src.services.import_service import (
     backfill_financial_import_if_empty,
     database_has_core_data,
@@ -58,6 +62,7 @@ class LakeLotApp(tk.Tk):
         self.screen_container: ttk.Frame | None = None
         self.sidebar: ttk.Frame | None = None
         self.screen_title_var = tk.StringVar(value="Modern desktop replacement")
+        self.current_help_key: str | None = None
 
         self.configure(background="#f3efe7")
         self.style = ttk.Style(self)
@@ -171,6 +176,7 @@ class LakeLotApp(tk.Tk):
         ttk.Label(header, textvariable=self.screen_title_var, style="Title.TLabel").grid(
             row=0, column=0, sticky="w"
         )
+        ttk.Button(header, text="Help", command=self.show_current_help).grid(row=0, column=1, sticky="e")
 
         self.screen_container = ttk.Frame(content, style="App.TFrame")
         self.screen_container.grid(row=1, column=0, sticky="nsew")
@@ -182,61 +188,72 @@ class LakeLotApp(tk.Tk):
         else:
             self.show_dashboard()
 
-    def _set_screen(self, title: str, frame_factory) -> None:
+    def _set_screen(self, title: str, frame_factory, help_key: str | None = None) -> None:
         self.screen_title_var.set(title)
+        self.current_help_key = help_key
         if self.screen_container is None:
             return
         for child in self.screen_container.winfo_children():
             child.destroy()
         frame = frame_factory(self.screen_container)
         frame.grid(row=0, column=0, sticky="nsew")
+        if help_key and not has_seen_screen_help(self.paths.update_config_path, help_key):
+            self.after(150, lambda: self.show_help(help_key, first_time=True))
 
     def show_dashboard(self) -> None:
-        self._set_screen("Home", lambda parent: DashboardFrame(parent, self.db_path))
+        self._set_screen("Home", lambda parent: DashboardFrame(parent, self.db_path), help_key="dashboard")
 
     def show_import_setup(self) -> None:
         self._set_screen(
             "Initial Setup",
             lambda parent: ImportSetupFrame(parent, self.legacy_dir, self.import_legacy_data),
+            help_key="initial_setup",
         )
 
     def show_owner_lot(self) -> None:
-        self._set_screen("Owners and Lots", lambda parent: OwnerLotFrame(parent, self.db_path))
+        self._set_screen("Owners and Lots", lambda parent: OwnerLotFrame(parent, self.db_path), help_key="owners_lots")
 
     def show_payments(self) -> None:
-        self._set_screen("Payments", lambda parent: PaymentsFrame(parent, self.db_path))
+        self._set_screen("Payments", lambda parent: PaymentsFrame(parent, self.db_path), help_key="payments")
 
     def show_payment_history(self) -> None:
         self._set_screen(
             "Payment History",
             lambda parent: PaymentHistoryFrame(parent, self.db_path),
+            help_key="payment_history",
         )
 
     def show_property_sales(self) -> None:
-        self._set_screen("Property Sales", lambda parent: PropertySalesFrame(parent, self.db_path))
+        self._set_screen("Property Sales", lambda parent: PropertySalesFrame(parent, self.db_path), help_key="property_sales")
 
     def show_liens_collection(self) -> None:
-        self._set_screen("Liens / Collection", lambda parent: LienCollectionFrame(parent, self.db_path))
+        self._set_screen("Liens / Collection", lambda parent: LienCollectionFrame(parent, self.db_path), help_key="liens_collection")
 
     def show_notices(self) -> None:
-        self._set_screen("Notices", lambda parent: NoticesFrame(parent, self.db_path))
+        self._set_screen("Notices", lambda parent: NoticesFrame(parent, self.db_path), help_key="notices")
 
     def show_assessments(self) -> None:
-        self._set_screen("Assessments", lambda parent: AssessmentsFrame(parent, self.db_path))
+        self._set_screen("Assessments", lambda parent: AssessmentsFrame(parent, self.db_path), help_key="assessments")
 
     def show_cards_stickers(self) -> None:
-        self._set_screen("Boat / ID Cards", lambda parent: CardsStickersFrame(parent, self.db_path))
+        self._set_screen("Boat / ID Cards", lambda parent: CardsStickersFrame(parent, self.db_path), help_key="cards_stickers")
 
     def show_financials(self) -> None:
-        self._set_screen("Financials", lambda parent: FinancialsFrame(parent, self.db_path))
+        self._set_screen("Financials", lambda parent: FinancialsFrame(parent, self.db_path), help_key="financials")
 
     def show_reports(self) -> None:
-        self._set_screen("Reports", lambda parent: ReportsFrame(parent, self.db_path))
+        self._set_screen("Reports", lambda parent: ReportsFrame(parent, self.db_path), help_key="reports")
 
     def show_utilities(self) -> None:
         self._set_screen(
             "Utilities",
-            lambda parent: UtilitiesFrame(parent, self.db_path, self.refresh_from_legacy_data),
+            lambda parent: UtilitiesFrame(
+                parent,
+                self.db_path,
+                self.refresh_from_legacy_data,
+                self.reset_screen_tutorials,
+            ),
+            help_key="utilities",
         )
 
     def show_placeholder(self) -> None:
@@ -299,6 +316,69 @@ class LakeLotApp(tk.Tk):
         if not confirm:
             return
         self.import_legacy_data(self.legacy_dir)
+
+    def show_current_help(self) -> None:
+        if self.current_help_key:
+            self.show_help(self.current_help_key, first_time=False)
+
+    def reset_screen_tutorials(self) -> None:
+        reset_seen_screen_help(self.paths.update_config_path)
+
+    def show_help(self, help_key: str, first_time: bool) -> None:
+        help_info = get_screen_help(help_key)
+        if help_info is None:
+            return
+
+        dialog = tk.Toplevel(self)
+        dialog.title(f"{help_info.title} Help")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.configure(background="#f3efe7")
+        dialog.resizable(False, False)
+
+        body = ttk.Frame(dialog, style="App.TFrame", padding=18)
+        body.grid(row=0, column=0, sticky="nsew")
+        body.columnconfigure(0, weight=1)
+
+        ttk.Label(body, text=help_info.title, style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 10))
+        summary = tk.Label(
+            body,
+            text=help_info.summary,
+            background="#f3efe7",
+            foreground="#1d2430",
+            justify="left",
+            anchor="w",
+            wraplength=460,
+            font=("TkDefaultFont", 11),
+        )
+        summary.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+
+        for idx, line in enumerate(help_info.actions, start=2):
+            bullet = tk.Label(
+                body,
+                text=f"- {line}",
+                background="#f3efe7",
+                foreground="#374151",
+                justify="left",
+                anchor="w",
+                wraplength=460,
+                font=("TkDefaultFont", 10),
+            )
+            bullet.grid(row=idx, column=0, sticky="ew", pady=(0, 4))
+
+        dont_show_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            body,
+            text="Don't show this again for this screen",
+            variable=dont_show_var,
+        ).grid(row=len(help_info.actions) + 2, column=0, sticky="w", pady=(12, 10))
+
+        def close_dialog() -> None:
+            if first_time or dont_show_var.get():
+                save_seen_screen_help(self.paths.update_config_path, help_key, True)
+            dialog.destroy()
+
+        ttk.Button(body, text="Close", command=close_dialog).grid(row=len(help_info.actions) + 3, column=0, sticky="e")
 
 
 def launch() -> None:
