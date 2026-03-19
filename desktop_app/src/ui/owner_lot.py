@@ -64,12 +64,8 @@ class OwnerLotFrame(ttk.Frame):
         self.run_search()
 
     def _build(self) -> None:
-        ttk.Label(self, text="Owners and Lots", style="Title.TLabel").grid(
-            row=0, column=0, sticky="w", pady=(0, 12)
-        )
-
         search_row = ttk.Frame(self, style="App.TFrame")
-        search_row.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        search_row.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         search_row.columnconfigure(1, weight=1)
         ttk.Label(search_row, text="Search by name, owner code, or lot number").grid(
             row=0, column=0, sticky="w", padx=(0, 12)
@@ -80,7 +76,7 @@ class OwnerLotFrame(ttk.Frame):
         ttk.Button(search_row, text="Search", command=self.run_search).grid(row=0, column=2, sticky="ew")
 
         split = ttk.Panedwindow(self, orient="horizontal")
-        split.grid(row=2, column=0, sticky="nsew")
+        split.grid(row=1, column=0, sticky="nsew")
 
         left = ttk.Frame(split, style="App.TFrame", padding=(0, 0, 12, 0))
         right = ttk.Frame(split, style="App.TFrame")

@@ -15,12 +15,6 @@ class DashboardFrame(ttk.Frame):
     def _build(self) -> None:
         snapshot = load_dashboard_snapshot(self.db_path)
 
-        ttk.Label(
-            self,
-            text="Home",
-            style="Title.TLabel",
-        ).grid(row=0, column=0, sticky="w", pady=(0, 12))
-
         intro = tk.Label(
             self,
             text="Use this screen to see what needs attention and jump into the main workflows.",
@@ -30,10 +24,10 @@ class DashboardFrame(ttk.Frame):
             justify="left",
             font=("TkDefaultFont", 11),
         )
-        intro.grid(row=1, column=0, sticky="ew", pady=(0, 16))
+        intro.grid(row=0, column=0, sticky="ew", pady=(0, 16))
 
         cards = ttk.Frame(self, style="App.TFrame")
-        cards.grid(row=2, column=0, sticky="ew")
+        cards.grid(row=1, column=0, sticky="ew")
         for index in range(len(snapshot.metrics)):
             cards.columnconfigure(index % 3, weight=1)
 
@@ -61,7 +55,7 @@ class DashboardFrame(ttk.Frame):
             ).grid(row=2, column=0, sticky="w", padx=18, pady=(8, 18))
 
         lower = ttk.Frame(self, style="App.TFrame")
-        lower.grid(row=3, column=0, sticky="nsew")
+        lower.grid(row=2, column=0, sticky="nsew")
         lower.columnconfigure(0, weight=1)
         lower.columnconfigure(1, weight=1)
 
