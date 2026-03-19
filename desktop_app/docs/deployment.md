@@ -87,8 +87,9 @@ Current repository:
 
 - publish a new installer for each version
 - keep the database outside the install folder
-- let the app check a release manifest later
-- download and run the installer for updates
+- let the app check GitHub Releases from `Utilities` -> `Check for Updates`
+- download the new installer into `%LOCALAPPDATA%\\LakeLotManager\\updates\\`
+- run the downloaded installer over the existing install to update the app
 
 ## Suggested Next Step
 

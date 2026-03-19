@@ -24,6 +24,7 @@ from src.services.import_service import (
     validate_legacy_directory,
 )
 from src.services.logging_service import get_logger
+from src.services.update_service import check_for_updates, download_update_asset
 from src.ui.assessments import AssessmentsFrame
 from src.ui.cards_stickers import CardsStickersFrame
 from src.ui.dashboard import DashboardFrame
@@ -260,6 +261,7 @@ class LakeLotApp(tk.Tk):
                 self.refresh_from_legacy_data,
                 self.reset_screen_tutorials,
                 self.open_log_folder,
+                self.check_for_updates,
             ),
             help_key="utilities",
         )
@@ -360,6 +362,98 @@ class LakeLotApp(tk.Tk):
                     ]
                 ),
             )
+
+    def check_for_updates(self) -> None:
+        try:
+            result = check_for_updates(self.paths.update_config_path)
+            self.logger.info(
+                "Update check complete: current=%s latest=%s available=%s",
+                result.current_version,
+                result.latest_version,
+                result.update_available,
+            )
+        except Exception as exc:
+            self.logger.exception("Update check failed")
+            messagebox.showerror("Update check failed", str(exc))
+            return
+
+        if not result.update_available:
+            messagebox.showinfo(
+                "No update available",
+                "\n".join(
+                    [
+                        f"Current version: v{result.current_version}",
+                        f"Latest version: v{result.latest_version}",
+                        "",
+                        "This install is already up to date.",
+                    ]
+                ),
+            )
+            return
+
+        if result.installer_asset is None:
+            messagebox.showerror(
+                "Update unavailable",
+                "\n".join(
+                    [
+                        f"Version v{result.latest_version} is available, but no Windows installer was found in the release assets.",
+                        result.release_page_url,
+                    ]
+                ),
+            )
+            return
+
+        confirm = messagebox.askyesno(
+            "Update available",
+            "\n".join(
+                [
+                    f"Current version: v{result.current_version}",
+                    f"Latest version: v{result.latest_version}",
+                    f"Installer: {result.installer_asset.name}",
+                    "",
+                    "Download the new installer now?",
+                ]
+            ),
+        )
+        if not confirm:
+            return
+
+        try:
+            installer_path = download_update_asset(result.installer_asset, self.paths.updates_dir)
+            self.logger.info("Downloaded update installer: %s", installer_path)
+        except Exception as exc:
+            self.logger.exception("Update download failed")
+            messagebox.showerror("Update download failed", str(exc))
+            return
+
+        try:
+            open_with_default_app(installer_path)
+        except Exception as exc:
+            self.logger.exception("Failed to launch downloaded installer")
+            messagebox.showerror(
+                "Installer launch failed",
+                "\n".join(
+                    [
+                        "The installer was downloaded, but it could not be opened automatically.",
+                        str(installer_path),
+                        "",
+                        str(exc),
+                    ]
+                ),
+            )
+            return
+
+        messagebox.showinfo(
+            "Update ready",
+            "\n".join(
+                [
+                    f"The installer was downloaded to:",
+                    str(installer_path),
+                    "",
+                    "Close the app before completing the update if the installer asks for it.",
+                ]
+            ),
+        )
 
     def report_callback_exception(self, exc, val, tb) -> None:
         self.logger.error(

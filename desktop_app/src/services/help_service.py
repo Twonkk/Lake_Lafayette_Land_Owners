@@ -117,6 +117,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
         actions=(
             "Run Data Health Checks reviews duplicates, mismatches, and missing links.",
             "Refresh From dBase re-imports the legacy data while dBase is still the source of truth.",
+            "Check for Updates looks for a newer Windows installer and can download it into the local updates folder.",
         ),
     ),
     "initial_setup": ScreenHelp(

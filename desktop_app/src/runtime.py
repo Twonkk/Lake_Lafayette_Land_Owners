@@ -11,7 +11,7 @@ import sys
 
 APP_NAME = "Lake Lafayette Landowners Association"
 APP_SLUG = "LakeLotManager"
-APP_VERSION = "0.1.6"
+APP_VERSION = "0.1.8"
 DB_FILENAME = "lake_lot.sqlite3"
 
 
@@ -44,6 +44,7 @@ class AppPaths:
     backup_dir: Path
     notices_dir: Path
     reports_dir: Path
+    updates_dir: Path
     db_path: Path
     legacy_dir: Path
     update_config_path: Path
@@ -57,6 +58,7 @@ def resolve_app_paths() -> AppPaths:
     backup_dir = data_dir / "backups"
     notices_dir = data_dir / "generated_notices"
     reports_dir = data_dir / "generated_reports"
+    updates_dir = data_dir / "updates"
     db_path = data_dir / DB_FILENAME
     update_config_path = data_dir / "update_config.json"
 
@@ -74,6 +76,7 @@ def resolve_app_paths() -> AppPaths:
         backup_dir=backup_dir,
         notices_dir=notices_dir,
         reports_dir=reports_dir,
+        updates_dir=updates_dir,
         db_path=db_path,
         legacy_dir=legacy_dir,
         update_config_path=update_config_path,
@@ -86,6 +89,7 @@ def ensure_runtime_dirs(paths: AppPaths) -> None:
     paths.backup_dir.mkdir(parents=True, exist_ok=True)
     paths.notices_dir.mkdir(parents=True, exist_ok=True)
     paths.reports_dir.mkdir(parents=True, exist_ok=True)
+    paths.updates_dir.mkdir(parents=True, exist_ok=True)
 
 
 def bootstrap_existing_local_database(paths: AppPaths) -> None:
