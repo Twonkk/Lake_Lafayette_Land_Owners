@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import subprocess
+import sys
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -133,3 +135,47 @@ def download_update_asset(asset: ReleaseAsset, destination_dir: Path) -> Path:
         raise RuntimeError(f"Download failed: {exc.reason}") from exc
 
     return destination_path
+
+
+def launch_update_installer(installer_path: Path, updates_dir: Path, current_pid: int) -> None:
+    installer = Path(installer_path).resolve()
+    if not installer.exists():
+        raise RuntimeError(f"Installer was not found: {installer}")
+
+    if sys.platform != "win32":
+        raise RuntimeError("Automatic installer handoff is only supported on Windows.")
+
+    updates_dir.mkdir(parents=True, exist_ok=True)
+    script_path = updates_dir / "run_update.cmd"
+    script_path.write_text(
+        "\n".join(
+            [
+                "@echo off",
+                "setlocal",
+                f"set TARGET_PID={int(current_pid)}",
+                f'set INSTALLER={str(installer)}',
+                ":waitloop",
+                'tasklist /FI "PID eq %TARGET_PID%" | find "%TARGET_PID%" >nul',
+                "if not errorlevel 1 (",
+                "  timeout /t 1 /nobreak >nul",
+                "  goto waitloop",
+                ")",
+                'start "" "%INSTALLER%"',
+                "endlocal",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    creationflags = 0
+    if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+        creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
+    if hasattr(subprocess, "DETACHED_PROCESS"):
+        creationflags |= subprocess.DETACHED_PROCESS
+
+    subprocess.Popen(
+        ["cmd", "/c", str(script_path)],
+        cwd=str(updates_dir),
+        creationflags=creationflags,
+        close_fds=True,
+    )

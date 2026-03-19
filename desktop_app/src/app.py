@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -24,7 +25,7 @@ from src.services.import_service import (
     validate_legacy_directory,
 )
 from src.services.logging_service import get_logger
-from src.services.update_service import check_for_updates, download_update_asset
+from src.services.update_service import check_for_updates, download_update_asset, launch_update_installer
 from src.ui.assessments import AssessmentsFrame
 from src.ui.cards_stickers import CardsStickersFrame
 from src.ui.dashboard import DashboardFrame
@@ -427,14 +428,15 @@ class LakeLotApp(tk.Tk):
             return
 
         try:
-            open_with_default_app(installer_path)
+            launch_update_installer(installer_path, self.paths.updates_dir, os.getpid())
+            self.logger.info("Queued installer handoff: %s", installer_path)
         except Exception as exc:
-            self.logger.exception("Failed to launch downloaded installer")
+            self.logger.exception("Failed to queue downloaded installer")
             messagebox.showerror(
-                "Installer launch failed",
+                "Installer handoff failed",
                 "\n".join(
                     [
-                        "The installer was downloaded, but it could not be opened automatically.",
+                        "The installer was downloaded, but the update handoff could not be started automatically.",
                         str(installer_path),
                         "",
                         str(exc),
@@ -444,16 +446,15 @@ class LakeLotApp(tk.Tk):
             return
 
         messagebox.showinfo(
-            "Update ready",
+            "Closing for update",
             "\n".join(
                 [
-                    f"The installer was downloaded to:",
-                    str(installer_path),
-                    "",
-                    "Close the app before completing the update if the installer asks for it.",
+                    "The app will close now.",
+                    "The installer should open automatically after the app exits.",
                 ]
             ),
         )
+        self.after(100, self.destroy)
 
     def report_callback_exception(self, exc, val, tb) -> None:
         self.logger.error(
