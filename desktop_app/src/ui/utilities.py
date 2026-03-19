@@ -2,6 +2,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
+from src.services.pdf_service import pdf_runtime_available
 from src.services.utility_service import run_data_health_checks
 
 
@@ -30,8 +31,11 @@ class UtilitiesFrame(ttk.Frame):
         ttk.Button(actions, text="Reset Screen Tutorials", command=self.reset_tutorials).grid(
             row=0, column=2, sticky="w", padx=(8, 0)
         )
-        ttk.Button(actions, text="Open Log Folder", command=self.open_logs_callback).grid(
+        ttk.Button(actions, text="Check PDF Setup", command=self.check_pdf_setup).grid(
             row=0, column=3, sticky="w", padx=(8, 0)
+        )
+        ttk.Button(actions, text="Open Log Folder", command=self.open_logs_callback).grid(
+            row=0, column=4, sticky="w", padx=(8, 0)
         )
 
         self.output = tk.Text(
@@ -72,4 +76,17 @@ class UtilitiesFrame(ttk.Frame):
         self.output.configure(state="normal")
         self.output.delete("1.0", "end")
         self.output.insert("1.0", "\n".join(lines).strip())
+        self.output.configure(state="disabled")
+
+    def check_pdf_setup(self) -> None:
+        ok, detail = pdf_runtime_available()
+        lines = [
+            "PDF Setup Check",
+            "",
+            f"Available: {'Yes' if ok else 'No'}",
+            f"Detail: {detail}",
+        ]
+        self.output.configure(state="normal")
+        self.output.delete("1.0", "end")
+        self.output.insert("1.0", "\n".join(lines))
         self.output.configure(state="disabled")

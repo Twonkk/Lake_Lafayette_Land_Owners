@@ -20,6 +20,26 @@ This includes:
 - `generated_notices/`
 - `generated_reports/`
 - `update_config.json`
+- `logs/`
+
+## PDF Requirement
+
+PDF output in the app currently depends on LibreOffice being installed on the target machine.
+
+This affects:
+
+- notices
+- financial reports
+- mailing labels
+- property sale receipts
+- boat sticker receipts
+- ID card receipts
+
+For the first install test on Windows, confirm LibreOffice is installed and then use:
+
+- `Utilities` -> `Check PDF Setup`
+
+If PDF setup is not available, the app will still run, but PDF-based printing and previews will fail until LibreOffice is installed.
 
 ## Build Steps
 
@@ -35,6 +55,23 @@ python -m PyInstaller --noconfirm --clean packaging/pyinstaller.spec
 ```powershell
 ISCC packaging/installer.iss
 ```
+
+## First Install Test
+
+Recommended checklist for the first real install:
+
+1. Install the packaged app on the target Windows PC.
+2. Launch the app and confirm it creates `%LOCALAPPDATA%\\LakeLotManager\\`.
+3. Use `Initial Setup` to import from `C:\\dbase`.
+4. Open `Utilities` and run `Check PDF Setup`.
+5. Test one write workflow from each major area:
+   - payment
+   - assessment
+   - property sale and reverse sale
+   - lien or collection action
+   - financial transaction
+6. Confirm backups appear under `backups/`.
+7. Confirm logs appear under `logs/`.
 
 ## GitHub
 

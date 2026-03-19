@@ -1,6 +1,6 @@
-#define MyAppName "Lake Lot Manager"
+#define MyAppName "Lake Lafayette Landowners Association"
 #define MyAppVersion "0.1.0"
-#define MyAppPublisher "Lake Lot Manager"
+#define MyAppPublisher "Lake Lafayette Landowners Association"
 #define MyAppExeName "LakeLotManager.exe"
 
 [Setup]

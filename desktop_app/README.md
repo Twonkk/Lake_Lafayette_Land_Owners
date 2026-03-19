@@ -36,6 +36,16 @@ Packaging scaffolding is under `packaging/`:
 
 Deployment notes are in `docs/deployment.md`.
 
+## PDF Output
+
+PDF output currently depends on LibreOffice being installed on the target machine.
+
+After install, use:
+
+- `Utilities` -> `Check PDF Setup`
+
+to confirm the PDF runtime is available before testing notice/report printing.
+
 ## Current Working Features
 
 - creates a local SQLite database
