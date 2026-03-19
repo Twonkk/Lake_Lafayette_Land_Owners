@@ -1,18 +1,20 @@
 # PyInstaller build spec for Windows packaging.
 
+from pathlib import Path
 from PyInstaller.utils.hooks import collect_submodules
 
 block_cipher = None
+project_root = Path(SPECPATH).parent
 
 hiddenimports = collect_submodules("src")
 
 a = Analysis(
-    ["src/main.py"],
-    pathex=["."],
+    [str(project_root / "src" / "main.py")],
+    pathex=[str(project_root)],
     binaries=[],
     datas=[
-        ("README.md", "."),
-        ("docs", "docs"),
+        (str(project_root / "README.md"), "."),
+        (str(project_root / "docs"), "docs"),
     ],
     hiddenimports=hiddenimports,
     hookspath=[],
