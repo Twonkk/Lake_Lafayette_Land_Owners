@@ -29,8 +29,6 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
     name="LakeLotManager",
     debug=False,
@@ -38,11 +36,13 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
+    exclude_binaries=True,
 )
 
 coll = COLLECT(
     exe,
     a.binaries,
+    a.zipfiles,
     a.datas,
     strip=False,
     upx=True,
