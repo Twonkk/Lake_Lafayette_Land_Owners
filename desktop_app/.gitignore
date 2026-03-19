@@ -9,3 +9,4 @@ data/generated_reports/
 dist/
 build/
 *.spec
+!packaging/pyinstaller.spec
