@@ -10,13 +10,13 @@ AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
-OutputDir=dist\installer
+OutputDir=..\dist\installer
 OutputBaseFilename=LakeLotManagerSetup
 Compression=lzma
 SolidCompression=yes
 
 [Files]
-Source: "dist\LakeLotManager\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\LakeLotManager\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
