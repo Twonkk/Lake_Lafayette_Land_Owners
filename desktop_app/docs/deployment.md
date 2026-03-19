@@ -24,7 +24,7 @@ This includes:
 
 ## PDF Requirement
 
-PDF output in the app currently depends on LibreOffice being installed on the target machine.
+PDF output in the app is generated directly with ReportLab and does not require LibreOffice.
 
 This affects:
 
@@ -35,11 +35,11 @@ This affects:
 - boat sticker receipts
 - ID card receipts
 
-For the first install test on Windows, confirm LibreOffice is installed and then use:
+For the first install test on Windows, use:
 
 - `Utilities` -> `Check PDF Setup`
 
-If PDF setup is not available, the app will still run, but PDF-based printing and previews will fail until LibreOffice is installed.
+If PDF setup is not available, the app will still run, but PDF-based printing and previews will fail until the app is reinstalled with its bundled Python dependencies intact.
 
 ## Build Steps
 

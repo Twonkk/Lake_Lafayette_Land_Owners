@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from html import escape
 from pathlib import Path
 import re
 
-from src.services.pdf_service import convert_html_to_pdf
+from reportlab.lib.pagesizes import LETTER
+from reportlab.pdfgen import canvas
+
+from src.services.pdf_service import build_pdf_path
+
 
 @dataclass(slots=True)
 class NoticeLotLine:
@@ -101,15 +104,15 @@ def build_notice_file_stem(owner: NoticeOwner, timestamp: datetime | None = None
     return cleaned or f"notice_{stamp}"
 
 
-def _render_owner_notice(owner: NoticeOwner, season_label: str) -> str:
+def _notice_table_lines(owner: NoticeOwner) -> tuple[list[str], float, bool, bool]:
     has_freeze = any(lot.freeze_flag == "Y" for lot in owner.lots)
     due_total = owner_notice_total(owner)
     collection_note = owner_has_collection_lots(owner)
-    rows = []
+    lot_rows = []
     for lot in owner.lots:
         total_display = lot.current_assessment if has_freeze else lot.total_due
         marker = "**" if collection_note and lot.collection_flag == "Y" else ""
-        rows.append(
+        lot_rows.append(
             f"{lot.lot_number:<6}{marker:<3}"
             f"{lot.delinquent_assessment:>12.2f}"
             f"{lot.delinquent_interest:>12.2f}"
@@ -118,21 +121,6 @@ def _render_owner_notice(owner: NoticeOwner, season_label: str) -> str:
             f"{total_display:>12.2f}"
         )
 
-    notes = []
-    if collection_note:
-        notes.append(
-            'Lots marked with "**" are in collection / county-taken status and need special follow-up language.'
-        )
-    if has_freeze:
-        notes.append(
-            "Freeze note: this temporary layout shows current assessment totals for frozen accounts."
-        )
-
-    note_html = "".join(f"<p>{escape(note)}</p>" for note in notes)
-    owner_name = owner_display_name(owner).upper()
-    owner_address = (owner.address or "").upper()
-    owner_city = (owner.city or "").upper()
-    owner_state = (owner.state or "").upper()
     total_line = (
         f"{'':<9}"
         f"{sum(lot.delinquent_assessment for lot in owner.lots):>12.2f}"
@@ -141,154 +129,73 @@ def _render_owner_notice(owner: NoticeOwner, season_label: str) -> str:
         f"{sum(lot.current_interest for lot in owner.lots):>12.2f}"
         f"{due_total:>12.2f}"
     )
-    return f"""
-    <section class="notice-page">
-      <div class="address-block">
-        <div>{escape(owner_name)}</div>
-        <div>{escape(owner_address)}</div>
-        <div>{escape(owner_city)}&nbsp;&nbsp;&nbsp;&nbsp;{escape(owner_state)}&nbsp;&nbsp;{escape(owner.zip_code)}</div>
-      </div>
-      <div class="owner-code">{escape(owner.owner_code)}</div>
-      <div class="due-line">Due: $ {due_total:,.2f}</div>
-
-      <div class="table-block">
-        <pre class="table-text">LOT     DELINQUENT  DELINQUENT    CURRENT      CURRENT        TOTAL
-NUMBER  ASSESSMENT   INTEREST   ASSESSMENT    INTEREST         DUE
-{escape(chr(10).join(rows))}
-        ------     ----------   ----------   ----------   ----------   ----------
-{escape(total_line)}</pre>
-      </div>
-
-      <div class="season-label">{escape(season_label)}</div>
-
-      <div class="remit">
-        <p>PLEASE REMIT PAYMENT IN THE AMOUNT OF ${due_total:,.2f}</p>
-      </div>
-
-      <div class="notes">
-        {note_html}
-      </div>
-    </section>
-    """
+    lines = [
+        "LOT     DELINQUENT  DELINQUENT    CURRENT      CURRENT        TOTAL",
+        "NUMBER  ASSESSMENT   INTEREST   ASSESSMENT    INTEREST         DUE",
+        *lot_rows,
+        "        ------     ----------   ----------   ----------   ----------   ----------",
+        total_line,
+    ]
+    return lines, due_total, has_freeze, collection_note
 
 
-def render_notice_html(
+def render_notice_pdf(
     owners: list[NoticeOwner],
     output_dir: Path,
     season_label: str,
     file_stem: str,
 ) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = output_dir / f"{file_stem}_{timestamp}.html"
-    pages = [_render_owner_notice(owner, season_label) for owner in owners]
-    document = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <title>Notice Print Preview</title>
-      <style>
-        @page {{
-          size: letter;
-          margin: 0.5in;
-        }}
-        body {{
-          font-family: "Courier New", Courier, monospace;
-          color: #111827;
-          margin: 0;
-          background: #f5f5f5;
-        }}
-        .notice-page {{
-          background: white;
-          position: relative;
-          width: 8in;
-          height: 10.2in;
-          margin: 0.25in auto;
-          padding: 0;
-          box-sizing: border-box;
-          page-break-after: always;
-          overflow: hidden;
-        }}
-        .address-block {{
-          position: absolute;
-          top: 0.55in;
-          left: 0.45in;
-          font-size: 14px;
-          line-height: 1.25;
-          letter-spacing: 1px;
-        }}
-        .owner-code {{
-          position: absolute;
-          top: 0.58in;
-          left: 4.9in;
-          font-size: 14px;
-          letter-spacing: 2px;
-        }}
-        .due-line {{
-          position: absolute;
-          top: 0.95in;
-          left: 5.55in;
-          font-size: 14px;
-        }}
-        .table-block {{
-          position: absolute;
-          top: 4.65in;
-          left: 0.22in;
-          right: 0.22in;
-        }}
-        .table-text {{
-          font-family: "Courier New", Courier, monospace;
-          font-size: 13px;
-          line-height: 1.22;
-          margin: 0;
-          white-space: pre;
-        }}
-        .season-label {{
-          position: absolute;
-          left: 0.45in;
-          bottom: 1.2in;
-          font-size: 12px;
-        }}
-        .remit {{
-          position: absolute;
-          left: 0.45in;
-          bottom: 0.8in;
-          right: 0.45in;
-          font-size: 14px;
-          letter-spacing: 1px;
-        }}
-        .notes {{
-          position: absolute;
-          left: 0.45in;
-          right: 0.45in;
-          bottom: 0.18in;
-          font-size: 12px;
-        }}
-        .notes p {{
-          margin: 0.08in 0 0;
-        }}
-        @media print {{
-          body {{
-            background: white;
-          }}
-          .notice-page {{
-            margin: 0;
-            border: none;
-            width: auto;
-            min-height: auto;
-          }}
-        }}
-      </style>
-    </head>
-    <body>
-      {''.join(pages)}
-    </body>
-    </html>
-    """
-    output_path.write_text(document, encoding="utf-8")
+    output_path = build_pdf_path(output_dir, f"{file_stem}_{timestamp}")
+    pdf = canvas.Canvas(str(output_path), pagesize=LETTER)
+    pdf.setTitle("Notice Print Preview")
+    page_width, page_height = LETTER
+
+    for owner in owners:
+        table_lines, due_total, has_freeze, collection_note = _notice_table_lines(owner)
+        owner_name = owner_display_name(owner).upper()
+        owner_address = (owner.address or "").upper()
+        owner_city = (owner.city or "").upper()
+        owner_state = (owner.state or "").upper()
+        city_state_zip = f"{owner_city}    {owner_state}  {owner.zip_code}".strip()
+
+        pdf.setFont("Courier", 14)
+        top_y = page_height - (0.55 * 72)
+        pdf.drawString(0.45 * 72, top_y, owner_name)
+        pdf.drawString(0.45 * 72, top_y - 18, owner_address)
+        pdf.drawString(0.45 * 72, top_y - 36, city_state_zip)
+        pdf.drawString(4.9 * 72, page_height - (0.58 * 72), owner.owner_code)
+        pdf.drawString(5.55 * 72, page_height - (0.95 * 72), f"Due: $ {due_total:,.2f}")
+
+        pdf.setFont("Courier", 13)
+        table_y = page_height - (4.65 * 72)
+        line_step = 15.5
+        for line in table_lines:
+            pdf.drawString(0.22 * 72, table_y, line)
+            table_y -= line_step
+
+        pdf.setFont("Courier", 12)
+        pdf.drawString(0.45 * 72, 1.2 * 72, season_label)
+        pdf.setFont("Courier-Bold", 14)
+        pdf.drawString(0.45 * 72, 0.8 * 72, f"PLEASE REMIT PAYMENT IN THE AMOUNT OF ${due_total:,.2f}")
+
+        note_y = 0.45 * 72
+        pdf.setFont("Courier", 12)
+        if collection_note:
+            pdf.drawString(
+                0.45 * 72,
+                note_y,
+                'Lots marked with "**" are in collection / county-taken status and need special follow-up language.',
+            )
+            note_y -= 12
+        if has_freeze:
+            pdf.drawString(
+                0.45 * 72,
+                note_y,
+                "Freeze note: this notice shows current assessment totals for frozen accounts.",
+            )
+
+        pdf.showPage()
+
+    pdf.save()
     return output_path
-
-
-def convert_notice_html_to_pdf(html_path: Path) -> Path:
-    return convert_html_to_pdf(html_path, "Failed to convert notice preview to PDF.")

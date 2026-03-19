@@ -1,10 +1,10 @@
 [project]
 name = "lake-lot-desktop"
-version = "0.1.0"
+version = "0.1.6"
 description = "Desktop replacement for the legacy dBase lot and financial system."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["reportlab>=4.0"]
 
 [project.optional-dependencies]
 build = ["pyinstaller>=6.0"]

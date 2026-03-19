@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from html import escape
 from pathlib import Path
 import shutil
 
 from src.db.connection import get_connection
-from src.services.pdf_service import convert_html_to_pdf
+from src.services.pdf_service import build_pdf_path, write_preformatted_pages_pdf
 
 
 @dataclass(slots=True)
@@ -485,15 +484,14 @@ def reverse_property_sale(db_path: Path, sale_group: PropertySaleGroup) -> Prope
     )
 
 
-def render_property_sale_receipt_html(
+def render_property_sale_receipt_pdf(
     receipt_lines: list[PropertySaleReceiptLine],
     output_dir: Path,
     file_stem: str,
 ) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = output_dir / f"{file_stem}_{timestamp}.html"
-    pages = []
+    output_path = build_pdf_path(output_dir, f"{file_stem}_{timestamp}")
+    pages: list[list[str]] = []
     for line in receipt_lines:
         seller_prefix = f"    SELLER: {line.seller_owner_code:<8} "
         buyer_prefix = f"    BUYER:  {line.buyer_owner_code:<8} "
@@ -515,48 +513,13 @@ def render_property_sale_receipt_html(
             f"{line.buyer_name}"
             f"{' ' * buyer_gap}{line.buyer_note}"
         )
-        pages.append(
-            f"""
-            <section class="receipt-page">
-              <pre class="receipt-block">{escape(row1)}
-{escape(row2)}
-{escape(row3)}</pre>
-            </section>
-            """
-        )
-    document = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <title>Property Sale Receipt</title>
-      <style>
-        @page {{ size: letter; margin: 0.5in; }}
-        body {{ font-family: "Courier New", Courier, monospace; background: white; margin: 0; }}
-        .receipt-page {{
-          position: relative;
-          width: 8in;
-          height: 10.2in;
-          margin: 0 auto;
-          page-break-after: always;
-        }}
-        .receipt-block {{
-          position: absolute;
-          top: 0.55in;
-          left: 0.05in;
-          font-size: 11pt;
-          line-height: 1.15;
-          margin: 0;
-          white-space: pre;
-        }}
-      </style>
-    </head>
-    <body>{''.join(pages)}</body>
-    </html>
-    """
-    output_path.write_text(document, encoding="utf-8")
-    return output_path
-
-
-def convert_property_sale_html_to_pdf(html_path: Path) -> Path:
-    return convert_html_to_pdf(html_path, "Failed to convert sale receipt to PDF.")
+        pages.append([row1, row2, row3])
+    return write_preformatted_pages_pdf(
+        output_path,
+        pages,
+        left_margin=0.05 * 72,
+        top_margin=0.55 * 72,
+        font_size=11,
+        line_height=12.65,
+        title="Property Sale Receipt",
+    )

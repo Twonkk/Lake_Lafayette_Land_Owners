@@ -7,11 +7,10 @@ from src.runtime import open_with_default_app
 from src.services.notice_service import (
     build_notice_batches,
     build_notice_file_stem,
-    convert_notice_html_to_pdf,
     owner_display_name,
     owner_has_collection_lots,
     owner_notice_total,
-    render_notice_html,
+    render_notice_pdf,
     should_omit_notice,
 )
 
@@ -248,16 +247,12 @@ class NoticesFrame(ttk.Frame):
             messagebox.showerror(title, "\n".join(detail_lines))
 
     def _render_notice_pdf(self, owners: list[object], season_label: str, file_stem: str) -> Path:
-        html_output = render_notice_html(
+        return render_notice_pdf(
             owners=owners,
             output_dir=self.output_dir,
             season_label=season_label,
             file_stem=file_stem,
         )
-        try:
-            return convert_notice_html_to_pdf(html_output)
-        finally:
-            html_output.unlink(missing_ok=True)
 
     def pdf_selected_notice(self) -> None:
         selected = self.owner_tree.selection()

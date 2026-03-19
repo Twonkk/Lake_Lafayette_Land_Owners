@@ -3,11 +3,10 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from src.runtime import open_with_default_app
-from src.services.financial_service import convert_financial_report_to_pdf
 from src.services.report_service import (
-    render_lot_report_html,
-    render_mailing_labels_html,
-    render_owner_report_html,
+    render_lot_report_pdf,
+    render_mailing_labels_pdf,
+    render_owner_report_pdf,
 )
 
 
@@ -46,30 +45,24 @@ class ReportsFrame(ttk.Frame):
 
     def create_owner_report(self) -> None:
         try:
-            html_output = render_owner_report_html(self.db_path, self.output_dir)
-            output = convert_financial_report_to_pdf(html_output)
+            output = render_owner_report_pdf(self.db_path, self.output_dir)
         except Exception as exc:
             messagebox.showerror("Report failed", str(exc))
             return
-        html_output.unlink(missing_ok=True)
         self._open_created_file(output, "Owner report preview failed")
 
     def create_lot_report(self) -> None:
         try:
-            html_output = render_lot_report_html(self.db_path, self.output_dir)
-            output = convert_financial_report_to_pdf(html_output)
+            output = render_lot_report_pdf(self.db_path, self.output_dir)
         except Exception as exc:
             messagebox.showerror("Report failed", str(exc))
             return
-        html_output.unlink(missing_ok=True)
         self._open_created_file(output, "Lot report preview failed")
 
     def create_mailing_labels(self) -> None:
         try:
-            html_output = render_mailing_labels_html(self.db_path, self.output_dir)
-            output = convert_financial_report_to_pdf(html_output)
+            output = render_mailing_labels_pdf(self.db_path, self.output_dir)
         except Exception as exc:
             messagebox.showerror("Report failed", str(exc))
             return
-        html_output.unlink(missing_ok=True)
         self._open_created_file(output, "Mailing labels preview failed")

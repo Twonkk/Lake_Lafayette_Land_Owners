@@ -7,13 +7,12 @@ from src.runtime import open_with_default_app
 from src.services.cards_stickers_service import (
     BoatStickerRequest,
     IdCardRequest,
-    convert_cards_stickers_html_to_pdf,
     default_issue_date,
     default_sticker_year,
     record_boat_sticker_purchase,
     record_id_card_issue,
-    render_boat_sticker_receipt_html,
-    render_id_card_receipt_html,
+    render_boat_sticker_receipt_pdf,
+    render_id_card_receipt_pdf,
 )
 
 
@@ -157,9 +156,7 @@ class CardsStickersFrame(ttk.Frame):
                 notes=self.sticker_notes.get("1.0", "end").strip(),
             )
             record_boat_sticker_purchase(self.db_path, request)
-            html = render_boat_sticker_receipt_html(self.db_path, request, self.db_path.parent / "generated_reports")
-            pdf = convert_cards_stickers_html_to_pdf(html)
-            html.unlink(missing_ok=True)
+            pdf = render_boat_sticker_receipt_pdf(self.db_path, request, self.db_path.parent / "generated_reports")
         except Exception as exc:
             messagebox.showerror("Boat sticker failed", str(exc))
             return
@@ -179,9 +176,7 @@ class CardsStickersFrame(ttk.Frame):
                 notes=self.id_notes.get("1.0", "end").strip(),
             )
             record_id_card_issue(self.db_path, request)
-            html = render_id_card_receipt_html(self.db_path, request, self.db_path.parent / "generated_reports")
-            pdf = convert_cards_stickers_html_to_pdf(html)
-            html.unlink(missing_ok=True)
+            pdf = render_id_card_receipt_pdf(self.db_path, request, self.db_path.parent / "generated_reports")
         except Exception as exc:
             messagebox.showerror("ID card issue failed", str(exc))
             return

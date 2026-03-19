@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from html import escape
 from pathlib import Path
 import shutil
 
 from src.db.connection import get_connection
-from src.services.pdf_service import convert_html_to_pdf
+from src.services.pdf_service import build_pdf_path, write_preformatted_pages_pdf
 
 
 @dataclass(slots=True)
@@ -152,57 +151,46 @@ def _owner_name_and_address(db_path: Path, owner_code: str) -> tuple[str, str]:
     return name, address
 
 
-def render_boat_sticker_receipt_html(db_path: Path, request: BoatStickerRequest, output_dir: Path) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
+def render_boat_sticker_receipt_pdf(db_path: Path, request: BoatStickerRequest, output_dir: Path) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    file_path = output_dir / f"boat_sticker_receipt_{stamp}.html"
+    file_path = build_pdf_path(output_dir, f"boat_sticker_receipt_{stamp}")
     owner_name, address = _owner_name_and_address(db_path, request.owner_code)
-    document = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <title>Boat Sticker Receipt</title>
-      <style>
-        @page {{ size: letter; margin: 0.6in; }}
-        body {{ font-family: "Courier New", Courier, monospace; margin: 0; }}
-        .receipt {{ white-space: pre-wrap; font-size: 12pt; line-height: 1.2; }}
-      </style>
-    </head>
-    <body>
-      <div class="receipt">{escape(f'''BOAT STICKER PURCHASE\n\nOWNER: {owner_name}\nOWNER CODE: {request.owner_code}\nLOT: {request.lot_number or '-'}\nYEAR: {request.sticker_year}\nQUANTITY: {request.quantity}\nAMOUNT: ${request.amount:,.2f}\n\nADDRESS:\n{address or '-'}\n\nNOTES:\n{request.notes.strip() or '-'}''')}</div>
-    </body>
-    </html>
-    """
-    file_path.write_text(document, encoding="utf-8")
-    return file_path
+    lines = [
+        "BOAT STICKER PURCHASE",
+        "",
+        f"OWNER: {owner_name}",
+        f"OWNER CODE: {request.owner_code}",
+        f"LOT: {request.lot_number or '-'}",
+        f"YEAR: {request.sticker_year}",
+        f"QUANTITY: {request.quantity}",
+        f"AMOUNT: ${request.amount:,.2f}",
+        "",
+        "ADDRESS:",
+        *(address.splitlines() or ["-"]),
+        "",
+        "NOTES:",
+        request.notes.strip() or "-",
+    ]
+    return write_preformatted_pages_pdf(file_path, [lines], title="Boat Sticker Receipt")
 
 
-def render_id_card_receipt_html(db_path: Path, request: IdCardRequest, output_dir: Path) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
+def render_id_card_receipt_pdf(db_path: Path, request: IdCardRequest, output_dir: Path) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    file_path = output_dir / f"id_card_receipt_{stamp}.html"
+    file_path = build_pdf_path(output_dir, f"id_card_receipt_{stamp}")
     owner_name, address = _owner_name_and_address(db_path, request.owner_code)
-    document = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <title>ID Card Receipt</title>
-      <style>
-        @page {{ size: letter; margin: 0.6in; }}
-        body {{ font-family: "Courier New", Courier, monospace; margin: 0; }}
-        .receipt {{ white-space: pre-wrap; font-size: 12pt; line-height: 1.2; }}
-      </style>
-    </head>
-    <body>
-      <div class="receipt">{escape(f'''ID CARD ISSUE\n\nOWNER: {owner_name}\nOWNER CODE: {request.owner_code}\nLOT: {request.lot_number or '-'}\nISSUE DATE: {request.issue_date}\nQUANTITY: {request.quantity}\n\nADDRESS:\n{address or '-'}\n\nNOTES:\n{request.notes.strip() or '-'}''')}</div>
-    </body>
-    </html>
-    """
-    file_path.write_text(document, encoding="utf-8")
-    return file_path
-
-
-def convert_cards_stickers_html_to_pdf(html_path: Path) -> Path:
-    return convert_html_to_pdf(html_path, "Failed to convert receipt to PDF.")
+    lines = [
+        "ID CARD ISSUE",
+        "",
+        f"OWNER: {owner_name}",
+        f"OWNER CODE: {request.owner_code}",
+        f"LOT: {request.lot_number or '-'}",
+        f"ISSUE DATE: {request.issue_date}",
+        f"QUANTITY: {request.quantity}",
+        "",
+        "ADDRESS:",
+        *(address.splitlines() or ["-"]),
+        "",
+        "NOTES:",
+        request.notes.strip() or "-",
+    ]
+    return write_preformatted_pages_pdf(file_path, [lines], title="ID Card Receipt")

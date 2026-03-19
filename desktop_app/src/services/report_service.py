@@ -1,12 +1,22 @@
 from __future__ import annotations
 
-from html import escape
 from pathlib import Path
 
+from reportlab.lib.units import inch
+from reportlab.platypus import Spacer, TableStyle
+
 from src.db.connection import get_connection
+from src.services.pdf_service import (
+    build_pdf_path,
+    build_report_story,
+    build_story_pdf,
+    build_table,
+    page_break,
+    paragraph,
+)
 
 
-def render_owner_report_html(db_path: Path, output_dir: Path) -> Path:
+def render_owner_report_pdf(db_path: Path, output_dir: Path) -> Path:
     with get_connection(db_path) as connection:
         owners = connection.execute(
             """
@@ -27,75 +37,72 @@ def render_owner_report_html(db_path: Path, output_dir: Path) -> Path:
             ORDER BY o.last_name, o.first_name, o.owner_code
             """
         ).fetchall()
-        rows = []
+
+        rows: list[list[object]] = [[
+            "Code",
+            "Name",
+            "Address",
+            "City/State/ZIP",
+            "Phone",
+            "Lots",
+            "Resident",
+            "Lien",
+            "Owned Lots",
+            "Total Owed",
+        ]]
         for owner in owners:
             lots = connection.execute(
                 """
-                SELECT lot_number, total_due, lien_flag, collection_flag
+                SELECT lot_number
                 FROM lots
                 WHERE owner_code = ?
                 ORDER BY lot_number
                 """,
                 [owner["owner_code"]],
             ).fetchall()
-            lot_list = ", ".join(row["lot_number"] for row in lots)
+            city_line = " ".join(
+                part
+                for part in [
+                    str(owner["city"] or "").strip(),
+                    str(owner["state"] or "").strip(),
+                    str(owner["zip"] or "").strip(),
+                ]
+                if part
+            )
             rows.append(
-                "<tr>"
-                f"<td>{escape(owner['owner_code'] or '')}</td>"
-                f"<td>{escape((owner['last_name'] or '') + ' ' + (owner['first_name'] or ''))}</td>"
-                f"<td>{escape(owner['address'] or '')}</td>"
-                f"<td>{escape((owner['city'] or '') + ', ' + (owner['state'] or '') + ' ' + (owner['zip'] or ''))}</td>"
-                f"<td>{escape(owner['phone'] or '')}</td>"
-                f"<td>{int(owner['number_lots'] or 0)}</td>"
-                f"<td>{escape(owner['resident_flag'] or '')}</td>"
-                f"<td>{escape(owner['lien_flag'] or '')}</td>"
-                f"<td>{escape(lot_list)}</td>"
-                f"<td class='num'>{float(owner['total_owed'] or 0):,.2f}</td>"
-                "</tr>"
+                [
+                    str(owner["owner_code"] or ""),
+                    " ".join(part for part in [owner["last_name"], owner["first_name"]] if part).strip(),
+                    str(owner["address"] or ""),
+                    city_line,
+                    str(owner["phone"] or ""),
+                    str(int(owner["number_lots"] or 0)),
+                    str(owner["resident_flag"] or ""),
+                    str(owner["lien_flag"] or ""),
+                    ", ".join(row["lot_number"] for row in lots),
+                    f"{float(owner['total_owed'] or 0):,.2f}",
+                ]
             )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    file_path = output_dir / "owner_report.html"
-    html = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <title>Owner Report</title>
-      <style>
-        body {{ font-family: Georgia, serif; margin: 24px; color: #111827; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 18px; }}
-        th, td {{ border: 1px solid #cbd5e1; padding: 6px 8px; text-align: left; font-size: 12px; }}
-        .num {{ text-align: right; }}
-      </style>
-    </head>
-    <body>
-      <h1>Owner Report</h1>
-      <table>
-        <thead>
-          <tr>
-            <th>Code</th>
-            <th>Name</th>
-            <th>Address</th>
-            <th>City/State/ZIP</th>
-            <th>Phone</th>
-            <th>Lots</th>
-            <th>Resident</th>
-            <th>Lien</th>
-            <th>Owned Lots</th>
-            <th>Total Owed</th>
-          </tr>
-        </thead>
-        <tbody>{''.join(rows)}</tbody>
-      </table>
-    </body>
-    </html>
-    """
-    file_path.write_text(html, encoding="utf-8")
-    return file_path
+    output_path = build_pdf_path(output_dir, "owner_report")
+    story = build_report_story("Owner Report")
+    table = build_table(
+        rows,
+        [0.55 * inch, 1.2 * inch, 1.45 * inch, 1.2 * inch, 0.8 * inch, 0.38 * inch, 0.5 * inch, 0.4 * inch, 1.45 * inch, 0.72 * inch],
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("ALIGN", (5, 1), (7, -1), "CENTER"),
+                ("ALIGN", (9, 1), (9, -1), "RIGHT"),
+            ]
+        )
+    )
+    story.append(table)
+    return build_story_pdf(output_path, story, title="Owner Report")
 
 
-def render_lot_report_html(db_path: Path, output_dir: Path) -> Path:
+def render_lot_report_pdf(db_path: Path, output_dir: Path) -> Path:
     with get_connection(db_path) as connection:
         lots = connection.execute(
             """
@@ -118,69 +125,58 @@ def render_lot_report_html(db_path: Path, output_dir: Path) -> Path:
             ORDER BY l.lot_number
             """
         ).fetchall()
-        rows = []
-        for lot in lots:
-            rows.append(
-                "<tr>"
-                f"<td>{escape(lot['lot_number'] or '')}</td>"
-                f"<td>{escape(lot['owner_code'] or '')}</td>"
-                f"<td>{escape((lot['last_name'] or '') + ' ' + (lot['first_name'] or ''))}</td>"
-                f"<td>{escape(lot['address'] or '')}</td>"
-                f"<td>{escape(lot['phone'] or '')}</td>"
-                f"<td>{escape(lot['lien_flag'] or '')}</td>"
-                f"<td>{escape(lot['collection_flag'] or '')}</td>"
-                f"<td class='num'>{float(lot['delinquent_assessment'] or 0):,.2f}</td>"
-                f"<td class='num'>{float(lot['delinquent_interest'] or 0):,.2f}</td>"
-                f"<td class='num'>{float(lot['current_assessment'] or 0):,.2f}</td>"
-                f"<td class='num'>{float(lot['current_interest'] or 0):,.2f}</td>"
-                f"<td class='num'>{float(lot['total_due'] or 0):,.2f}</td>"
-                "</tr>"
-            )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    file_path = output_dir / "lot_report.html"
-    html = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <title>Lot Report</title>
-      <style>
-        body {{ font-family: Georgia, serif; margin: 24px; color: #111827; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 18px; }}
-        th, td {{ border: 1px solid #cbd5e1; padding: 6px 8px; text-align: left; font-size: 12px; }}
-        .num {{ text-align: right; }}
-      </style>
-    </head>
-    <body>
-      <h1>Lot Report</h1>
-      <table>
-        <thead>
-          <tr>
-            <th>Lot</th>
-            <th>Owner Code</th>
-            <th>Owner</th>
-            <th>Address</th>
-            <th>Phone</th>
-            <th>Lien</th>
-            <th>Collection</th>
-            <th>Delinq. Assess.</th>
-            <th>Delinq. Interest</th>
-            <th>Current Assess.</th>
-            <th>Current Interest</th>
-            <th>Total Due</th>
-          </tr>
-        </thead>
-        <tbody>{''.join(rows)}</tbody>
-      </table>
-    </body>
-    </html>
-    """
-    file_path.write_text(html, encoding="utf-8")
-    return file_path
+    rows: list[list[object]] = [[
+        "Lot",
+        "Owner Code",
+        "Owner",
+        "Address",
+        "Phone",
+        "Lien",
+        "Collection",
+        "Delinq. Assess.",
+        "Delinq. Interest",
+        "Current Assess.",
+        "Current Interest",
+        "Total Due",
+    ]]
+    for lot in lots:
+        rows.append(
+            [
+                str(lot["lot_number"] or ""),
+                str(lot["owner_code"] or ""),
+                " ".join(part for part in [lot["last_name"], lot["first_name"]] if part).strip(),
+                str(lot["address"] or ""),
+                str(lot["phone"] or ""),
+                str(lot["lien_flag"] or ""),
+                str(lot["collection_flag"] or ""),
+                f"{float(lot['delinquent_assessment'] or 0):,.2f}",
+                f"{float(lot['delinquent_interest'] or 0):,.2f}",
+                f"{float(lot['current_assessment'] or 0):,.2f}",
+                f"{float(lot['current_interest'] or 0):,.2f}",
+                f"{float(lot['total_due'] or 0):,.2f}",
+            ]
+        )
+
+    output_path = build_pdf_path(output_dir, "lot_report")
+    story = build_report_story("Lot Report")
+    table = build_table(
+        rows,
+        [0.42 * inch, 0.6 * inch, 1.0 * inch, 1.0 * inch, 0.7 * inch, 0.35 * inch, 0.5 * inch, 0.6 * inch, 0.62 * inch, 0.62 * inch, 0.62 * inch, 0.62 * inch],
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("ALIGN", (5, 1), (6, -1), "CENTER"),
+                ("ALIGN", (7, 1), (11, -1), "RIGHT"),
+            ]
+        )
+    )
+    story.append(table)
+    return build_story_pdf(output_path, story, title="Lot Report")
 
 
-def render_mailing_labels_html(db_path: Path, output_dir: Path) -> Path:
+def render_mailing_labels_pdf(db_path: Path, output_dir: Path) -> Path:
     with get_connection(db_path) as connection:
         owners = connection.execute(
             """
@@ -199,59 +195,37 @@ def render_mailing_labels_html(db_path: Path, output_dir: Path) -> Path:
             """
         ).fetchall()
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    file_path = output_dir / "mailing_labels.html"
-
-    blocks: list[str] = []
-    for owner in owners:
+    output_path = build_pdf_path(output_dir, "mailing_labels")
+    story = []
+    labels_per_page = 9
+    current_page = 0
+    for index, owner in enumerate(owners):
         name = " ".join(part for part in [owner["first_name"], owner["last_name"]] if part).strip().upper()
         address = str(owner["address"] or "").strip().upper()
-        city = str(owner["city"] or "").strip().upper()
-        state = str(owner["state"] or "").strip().upper()
-        zip_code = str(owner["zip"] or "").strip().upper()
+        city_line = " ".join(
+            part
+            for part in [owner["city"], owner["state"], owner["zip"]]
+            if str(part or "").strip()
+        ).strip().upper()
         top_line = f"{str(owner['primary_lot_number'] or '').strip().upper():<8}{str(owner['owner_code'] or '').strip().upper():>10}".rstrip()
-        city_line = " ".join(part for part in [city, state, zip_code] if part).strip()
-        blocks.append(
-            "<div class='label-block'>"
-            f"<pre>{escape(top_line)}\n{escape(name)}\n{escape(address)}\n{escape(city_line)}</pre>"
-            "</div>"
-        )
+        story.append(paragraph(top_line, small=True))
+        story.append(paragraph(name, small=True))
+        story.append(paragraph(address or "-", small=True))
+        story.append(paragraph(city_line or "-", small=True))
+        current_page += 1
+        if current_page < labels_per_page and index != len(owners) - 1:
+            story.append(Spacer(1, 0.22 * inch))
+        elif index != len(owners) - 1:
+            story.append(Spacer(1, 0.05 * inch))
+            story.append(page_break())
+            current_page = 0
 
-    html = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <title>Mailing Labels</title>
-      <style>
-        @page {{ size: letter; margin: 0.28in 0.35in 0.28in 0.10in; }}
-        body {{
-          font-family: "Courier New", Courier, monospace;
-          background: white;
-          color: #1f2937;
-          margin: 0;
-        }}
-        .page {{
-          width: 100%;
-          page-break-after: always;
-        }}
-        .label-block {{
-          width: 3.35in;
-          height: 0.97in;
-          padding-top: 0.05in;
-          box-sizing: border-box;
-        }}
-        .label-block pre {{
-          margin: 0;
-          white-space: pre;
-          font-size: 11pt;
-          line-height: 1.0;
-          letter-spacing: 0.01em;
-        }}
-      </style>
-    </head>
-    <body>{''.join(blocks)}</body>
-    </html>
-    """
-    file_path.write_text(html, encoding="utf-8")
-    return file_path
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Mailing Labels",
+        left_margin=0.12 * inch,
+        right_margin=4.0 * inch,
+        top_margin=0.3 * inch,
+        bottom_margin=0.3 * inch,
+    )

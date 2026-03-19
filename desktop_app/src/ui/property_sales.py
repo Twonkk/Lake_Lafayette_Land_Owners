@@ -9,10 +9,9 @@ from src.services.property_sale_service import (
     PropertySaleGroup,
     PropertySaleRequest,
     build_property_sale_receipt_lines,
-    convert_property_sale_html_to_pdf,
     default_sale_date,
     record_property_sale,
-    render_property_sale_receipt_html,
+    render_property_sale_receipt_pdf,
     reverse_property_sale,
 )
 
@@ -382,13 +381,11 @@ class PropertySalesFrame(ttk.Frame):
         receipt_dir = self.db_path.parent / "generated_reports"
         try:
             receipt_lines = build_property_sale_receipt_lines(self.db_path, result)
-            html_output = render_property_sale_receipt_html(
+            pdf_output = render_property_sale_receipt_pdf(
                 receipt_lines,
                 receipt_dir,
                 "property_sale_receipt",
             )
-            pdf_output = convert_property_sale_html_to_pdf(html_output)
-            html_output.unlink(missing_ok=True)
         except Exception as exc:
             messagebox.showerror("Receipt failed", str(exc))
             return

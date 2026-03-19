@@ -13,16 +13,15 @@ from src.services.financial_service import (
     active_fiscal_year,
     active_fiscal_month,
     close_financial_month,
-    convert_financial_report_to_pdf,
     create_new_fiscal_year,
     default_financial_date,
     delete_financial_account,
     post_financial_transaction,
     rename_financial_account,
-    render_budget_report_html,
-    render_monthly_financial_report_html,
-    render_transaction_log_html,
-    render_year_end_financial_report_html,
+    render_budget_report_pdf,
+    render_monthly_financial_report_pdf,
+    render_transaction_log_pdf,
+    render_year_end_financial_report_pdf,
     update_financial_budget,
 )
 
@@ -469,12 +468,10 @@ class FinancialsFrame(ttk.Frame):
         year = self.year_var.get().strip()
         output_dir = self.db_path.parent / "generated_reports"
         try:
-            html_output = render_monthly_financial_report_html(self.db_path, month, year, output_dir)
-            pdf_output = convert_financial_report_to_pdf(html_output)
+            pdf_output = render_monthly_financial_report_pdf(self.db_path, month, year, output_dir)
         except Exception as exc:
             messagebox.showerror("Report failed", str(exc))
             return
-        html_output.unlink(missing_ok=True)
         self._open_created_file(pdf_output, "Monthly report preview failed")
 
     def create_transaction_log(self) -> None:
@@ -485,24 +482,20 @@ class FinancialsFrame(ttk.Frame):
         year = self.year_var.get().strip()
         output_dir = self.db_path.parent / "generated_reports"
         try:
-            html_output = render_transaction_log_html(self.db_path, month, year, output_dir)
-            pdf_output = convert_financial_report_to_pdf(html_output)
+            pdf_output = render_transaction_log_pdf(self.db_path, month, year, output_dir)
         except Exception as exc:
             messagebox.showerror("Report failed", str(exc))
             return
-        html_output.unlink(missing_ok=True)
         self._open_created_file(pdf_output, "Transaction log preview failed")
 
     def create_budget_report_pdf(self) -> None:
         output_dir = self.db_path.parent / "generated_reports"
         year = self.year_var.get().strip()
         try:
-            html_output = render_budget_report_html(self.db_path, year, output_dir)
-            pdf_output = convert_financial_report_to_pdf(html_output)
+            pdf_output = render_budget_report_pdf(self.db_path, year, output_dir)
         except Exception as exc:
             messagebox.showerror("Report failed", str(exc))
             return
-        html_output.unlink(missing_ok=True)
         self._open_created_file(pdf_output, "Budget report preview failed")
 
     def create_year_end_report(self) -> None:
@@ -512,12 +505,10 @@ class FinancialsFrame(ttk.Frame):
         output_dir = self.db_path.parent / "generated_reports"
         year = self.year_var.get().strip()
         try:
-            html_output = render_year_end_financial_report_html(self.db_path, year, output_dir)
-            pdf_output = convert_financial_report_to_pdf(html_output)
+            pdf_output = render_year_end_financial_report_pdf(self.db_path, year, output_dir)
         except Exception as exc:
             messagebox.showerror("Report failed", str(exc))
             return
-        html_output.unlink(missing_ok=True)
         self._open_created_file(pdf_output, "Year-end report preview failed")
 
     def post_transaction(self) -> None:

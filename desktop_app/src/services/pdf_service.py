@@ -1,74 +1,152 @@
 from __future__ import annotations
 
+from importlib.util import find_spec
 from pathlib import Path
-import os
-import shutil
-import subprocess
-import sys
+from typing import Iterable
+
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import LETTER
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.pdfgen import canvas
 
 
-def _candidate_office_commands() -> list[str]:
-    commands: list[str] = []
-    for name in ("soffice", "libreoffice"):
-        resolved = shutil.which(name)
-        if resolved:
-            commands.append(resolved)
-    if sys.platform == "win32":
-        program_files = [
-            os.environ.get("ProgramFiles"),
-            os.environ.get("ProgramFiles(x86)"),
-        ]
-        for base in program_files:
-            if not base:
-                continue
-            for candidate in (
-                Path(base) / "LibreOffice" / "program" / "soffice.exe",
-                Path(base) / "LibreOffice" / "program" / "soffice.com",
-            ):
-                if candidate.exists():
-                    commands.append(str(candidate))
-    return list(dict.fromkeys(commands))
+BODY_STYLE = ParagraphStyle(
+    "LakeLotBody",
+    parent=getSampleStyleSheet()["BodyText"],
+    fontName="Helvetica",
+    fontSize=10,
+    leading=12,
+    spaceAfter=6,
+)
+
+SMALL_BODY_STYLE = ParagraphStyle(
+    "LakeLotSmallBody",
+    parent=BODY_STYLE,
+    fontSize=9,
+    leading=11,
+)
+
+TITLE_STYLE = ParagraphStyle(
+    "LakeLotTitle",
+    parent=getSampleStyleSheet()["Heading1"],
+    fontName="Helvetica-Bold",
+    fontSize=16,
+    leading=18,
+    spaceAfter=6,
+)
+
+SUBTITLE_STYLE = ParagraphStyle(
+    "LakeLotSubtitle",
+    parent=BODY_STYLE,
+    fontName="Helvetica-Bold",
+    fontSize=10,
+    leading=12,
+    spaceAfter=4,
+)
 
 
 def pdf_runtime_available() -> tuple[bool, str]:
-    commands = _candidate_office_commands()
-    if not commands:
-        return False, "LibreOffice was not found. Install LibreOffice to enable PDF output."
-    return True, commands[0]
+    if find_spec("reportlab") is None:
+        return False, "ReportLab is not installed. Reinstall the app to restore PDF output."
+    return True, "ReportLab PDF generation is available."
 
 
-def convert_html_to_pdf(html_path: Path, error_prefix: str) -> Path:
-    pdf_path = html_path.with_suffix(".pdf")
-    runtime_dir = html_path.parent / ".lo_runtime"
-    config_home = html_path.parent / ".lo_config"
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    config_home.mkdir(parents=True, exist_ok=True)
+def build_pdf_path(output_dir: Path, file_stem: str) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir / f"{file_stem}.pdf"
 
-    env = os.environ.copy()
-    env["HOME"] = str(config_home)
-    env["XDG_CONFIG_HOME"] = str(config_home)
-    env["XDG_RUNTIME_DIR"] = str(runtime_dir)
 
-    available, runtime_value = pdf_runtime_available()
-    if not available:
-        raise RuntimeError(f"{error_prefix} {runtime_value}")
-
-    result = subprocess.run(
-        [
-            runtime_value,
-            "--headless",
-            "--convert-to",
-            "pdf",
-            "--outdir",
-            str(html_path.parent),
-            str(html_path),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
+def build_story_pdf(
+    output_path: Path,
+    story: list,
+    *,
+    title: str | None = None,
+    author: str = "Lake Lafayette Landowners Association",
+    left_margin: float = 0.55 * inch,
+    right_margin: float = 0.55 * inch,
+    top_margin: float = 0.6 * inch,
+    bottom_margin: float = 0.55 * inch,
+) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    document = SimpleDocTemplate(
+        str(output_path),
+        pagesize=LETTER,
+        leftMargin=left_margin,
+        rightMargin=right_margin,
+        topMargin=top_margin,
+        bottomMargin=bottom_margin,
+        title=title or output_path.stem,
+        author=author,
     )
-    if result.returncode != 0 or not pdf_path.exists():
-        detail = result.stderr.strip() or result.stdout.strip() or "Unknown PDF conversion error."
-        raise RuntimeError(f"{error_prefix} {detail}")
-    return pdf_path
+    document.build(story)
+    return output_path
+
+
+def write_preformatted_pages_pdf(
+    output_path: Path,
+    pages: Iterable[Iterable[str]],
+    *,
+    left_margin: float = 0.5 * inch,
+    top_margin: float = 0.55 * inch,
+    font_name: str = "Courier",
+    font_size: float = 11,
+    line_height: float | None = None,
+    title: str | None = None,
+) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    pdf = canvas.Canvas(str(output_path), pagesize=LETTER)
+    pdf.setTitle(title or output_path.stem)
+    width, height = LETTER
+    step = line_height or (font_size * 1.15)
+    for page_lines in pages:
+        y = height - top_margin
+        pdf.setFont(font_name, font_size)
+        for line in page_lines:
+            pdf.drawString(left_margin, y, str(line))
+            y -= step
+        pdf.showPage()
+    pdf.save()
+    return output_path
+
+
+def build_report_story(title: str, subtitle_lines: Iterable[str] | None = None) -> list:
+    story = [Paragraph(title, TITLE_STYLE)]
+    for line in subtitle_lines or []:
+        story.append(Paragraph(line, SMALL_BODY_STYLE))
+    if subtitle_lines:
+        story.append(Spacer(1, 0.15 * inch))
+    return story
+
+
+def build_table(data: list[list[object]], column_widths: list[float], *, repeat_header: bool = True) -> Table:
+    table = Table(data, colWidths=column_widths, repeatRows=1 if repeat_header else 0)
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#dbe7f5")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                ("LEADING", (0, 0), (-1, -1), 10),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#c6d0dd")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    return table
+
+
+def paragraph(text: str, *, small: bool = False) -> Paragraph:
+    return Paragraph(text, SMALL_BODY_STYLE if small else BODY_STYLE)
+
+
+def page_break() -> PageBreak:
+    return PageBreak()

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
-from html import escape
 from pathlib import Path
 
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+from reportlab.platypus import TableStyle
+
 from src.db.connection import get_connection
-from src.services.pdf_service import convert_html_to_pdf
+from src.services.pdf_service import build_pdf_path, build_report_story, build_story_pdf, build_table
 
 
 TRANSACTION_TYPES = {
@@ -567,7 +570,7 @@ def close_financial_month(db_path: Path, fiscal_year: str, fiscal_month: int) ->
     )
 
 
-def render_monthly_financial_report_html(
+def render_monthly_financial_report_pdf(
     db_path: Path,
     fiscal_month: int,
     fiscal_year: str,
@@ -595,69 +598,60 @@ def render_monthly_financial_report_html(
             [fiscal_month, fiscal_year],
         ).fetchall()
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    file_path = output_dir / f"financial_month_{fiscal_year}_{fiscal_month}_{date.today().strftime('%m-%d-%y')}.html"
-    lines = []
+    output_path = build_pdf_path(
+        output_dir,
+        f"financial_month_{fiscal_year}_{fiscal_month}_{date.today().strftime('%m-%d-%y')}",
+    )
+    rows: list[list[object]] = [[
+        "Code",
+        "Account",
+        "Annual Budget",
+        "Budget To Date",
+        "Month Expense",
+        "Month Deposit",
+        "Year To Date",
+    ]]
     current_category = None
     for row in rows:
         if row["category"] != current_category:
             current_category = row["category"]
-            lines.append(f"<tr class='category'><td colspan='7'>{escape(current_category or '')}</td></tr>")
-        lines.append(
-            "<tr>"
-            f"<td>{escape(row['account_code'] or '')}</td>"
-            f"<td>{escape(row['account_name'] or '')}</td>"
-            f"<td class='num'>{float(row['yearly_budget'] or 0):,.2f}</td>"
-            f"<td class='num'>{float(row['budget_to_date'] or 0):,.2f}</td>"
-            f"<td class='num'>{float(row['month_expense'] or 0):,.2f}</td>"
-            f"<td class='num'>{float(row['month_deposit'] or 0):,.2f}</td>"
-            f"<td class='num'>{float(row['year_to_date'] or 0):,.2f}</td>"
-            "</tr>"
+            rows.append([f"Category: {current_category or ''}", "", "", "", "", "", ""])
+        rows.append(
+            [
+                str(row["account_code"] or ""),
+                str(row["account_name"] or ""),
+                f"{float(row['yearly_budget'] or 0):,.2f}",
+                f"{float(row['budget_to_date'] or 0):,.2f}",
+                f"{float(row['month_expense'] or 0):,.2f}",
+                f"{float(row['month_deposit'] or 0):,.2f}",
+                f"{float(row['year_to_date'] or 0):,.2f}",
+            ]
         )
 
-    html = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <title>Monthly Financial Report</title>
-      <style>
-        body {{ font-family: Georgia, serif; margin: 24px; color: #111827; }}
-        h1 {{ margin-bottom: 4px; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 18px; }}
-        th, td {{ border: 1px solid #cbd5e1; padding: 6px 8px; text-align: left; font-size: 13px; }}
-        .num {{ text-align: right; }}
-        .category td {{ background: #e5ecf6; font-weight: bold; }}
-      </style>
-    </head>
-    <body>
-      <h1>Monthly Financial Report</h1>
-      <div>Fiscal year: {escape(fiscal_year)}</div>
-      <div>Fiscal month: {fiscal_month}</div>
-      <table>
-        <thead>
-          <tr>
-            <th>Code</th>
-            <th>Account</th>
-            <th>Annual Budget</th>
-            <th>Budget To Date</th>
-            <th>Month Expense</th>
-            <th>Month Deposit</th>
-            <th>Year To Date</th>
-          </tr>
-        </thead>
-        <tbody>
-          {''.join(lines)}
-        </tbody>
-      </table>
-    </body>
-    </html>
-    """
-    file_path.write_text(html, encoding="utf-8")
-    return file_path
+    story = build_report_story(
+        "Monthly Financial Report",
+        [f"Fiscal year: {fiscal_year}", f"Fiscal month: {fiscal_month}"],
+    )
+    table = build_table(
+        rows,
+        [0.55 * inch, 2.1 * inch, 1.0 * inch, 1.0 * inch, 0.95 * inch, 0.95 * inch, 0.95 * inch],
+    )
+    category_rows = [index for index, row in enumerate(rows) if row[1] == "" and index > 0]
+    styles = [("ALIGN", (2, 1), (6, -1), "RIGHT")]
+    for index in category_rows:
+        styles.extend(
+            [
+                ("SPAN", (0, index), (-1, index)),
+                ("BACKGROUND", (0, index), (-1, index), colors.HexColor("#e5ecf6")),
+                ("FONTNAME", (0, index), (-1, index), "Helvetica-Bold"),
+            ]
+        )
+    table.setStyle(TableStyle(styles))
+    story.append(table)
+    return build_story_pdf(output_path, story, title="Monthly Financial Report")
 
 
-def render_transaction_log_html(
+def render_transaction_log_pdf(
     db_path: Path,
     fiscal_month: int,
     fiscal_year: str,
@@ -684,67 +678,50 @@ def render_transaction_log_html(
             [fiscal_month, fiscal_year],
         ).fetchall()
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    file_path = output_dir / f"financial_transactions_{fiscal_year}_{fiscal_month}_{date.today().strftime('%m-%d-%y')}.html"
-    lines = []
+    output_path = build_pdf_path(
+        output_dir,
+        f"financial_transactions_{fiscal_year}_{fiscal_month}_{date.today().strftime('%m-%d-%y')}",
+    )
+    table_rows: list[list[object]] = [[
+        "#",
+        "Date",
+        "Type",
+        "Acct",
+        "Amount",
+        "Payee",
+        "Memo",
+        "Check",
+        "Ref",
+    ]]
     for row in rows:
-        lines.append(
-            "<tr>"
-            f"<td>{escape(row['transaction_number'] or '')}</td>"
-            f"<td>{escape(row['transaction_date'] or '')}</td>"
-            f"<td>{escape(row['transaction_type'] or '')}</td>"
-            f"<td>{escape(row['account_code'] or '')}</td>"
-            f"<td class='num'>{float(row['amount'] or 0):,.2f}</td>"
-            f"<td>{escape(row['payee'] or '')}</td>"
-            f"<td>{escape(row['memo'] or '')}</td>"
-            f"<td>{escape(row['check_number'] or '')}</td>"
-            f"<td>{escape(row['reference_number'] or '')}</td>"
-            "</tr>"
+        table_rows.append(
+            [
+                str(row["transaction_number"] or ""),
+                str(row["transaction_date"] or ""),
+                str(row["transaction_type"] or ""),
+                str(row["account_code"] or ""),
+                f"{float(row['amount'] or 0):,.2f}",
+                str(row["payee"] or ""),
+                str(row["memo"] or ""),
+                str(row["check_number"] or ""),
+                str(row["reference_number"] or ""),
+            ]
         )
 
-    html = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <title>Transaction Log</title>
-      <style>
-        body {{ font-family: Georgia, serif; margin: 24px; color: #111827; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 18px; }}
-        th, td {{ border: 1px solid #cbd5e1; padding: 6px 8px; text-align: left; font-size: 12px; }}
-        .num {{ text-align: right; }}
-      </style>
-    </head>
-    <body>
-      <h1>Transaction Log</h1>
-      <div>Fiscal year: {escape(fiscal_year)}</div>
-      <div>Fiscal month: {fiscal_month}</div>
-      <table>
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Date</th>
-            <th>Type</th>
-            <th>Acct</th>
-            <th>Amount</th>
-            <th>Payee</th>
-            <th>Memo</th>
-            <th>Check</th>
-            <th>Ref</th>
-          </tr>
-        </thead>
-        <tbody>
-          {''.join(lines)}
-        </tbody>
-      </table>
-    </body>
-    </html>
-    """
-    file_path.write_text(html, encoding="utf-8")
-    return file_path
+    story = build_report_story(
+        "Transaction Log",
+        [f"Fiscal year: {fiscal_year}", f"Fiscal month: {fiscal_month}"],
+    )
+    table = build_table(
+        table_rows,
+        [0.42 * inch, 0.75 * inch, 0.45 * inch, 0.42 * inch, 0.65 * inch, 1.35 * inch, 1.8 * inch, 0.55 * inch, 0.5 * inch],
+    )
+    table.setStyle(TableStyle([("ALIGN", (4, 1), (4, -1), "RIGHT")]))
+    story.append(table)
+    return build_story_pdf(output_path, story, title="Transaction Log")
 
 
-def render_year_end_financial_report_html(db_path: Path, fiscal_year: str, output_dir: Path) -> Path:
+def render_year_end_financial_report_pdf(db_path: Path, fiscal_year: str, output_dir: Path) -> Path:
     with get_connection(db_path) as connection:
         rows = connection.execute(
             """
@@ -763,61 +740,43 @@ def render_year_end_financial_report_html(db_path: Path, fiscal_year: str, outpu
             [fiscal_year],
         ).fetchall()
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    file_path = output_dir / f"financial_year_end_{fiscal_year}_{date.today().strftime('%m-%d-%y')}.html"
-    lines = []
+    output_path = build_pdf_path(
+        output_dir,
+        f"financial_year_end_{fiscal_year}_{date.today().strftime('%m-%d-%y')}",
+    )
+    table_rows: list[list[object]] = [["Code", "Account", "Annual Budget", "Year To Date"]]
     current_category = None
     for row in rows:
         if row["category"] != current_category:
             current_category = row["category"]
-            lines.append(f"<tr class='category'><td colspan='4'>{escape(current_category or '')}</td></tr>")
-        lines.append(
-            "<tr>"
-            f"<td>{escape(row['account_code'] or '')}</td>"
-            f"<td>{escape(row['account_name'] or '')}</td>"
-            f"<td class='num'>{float(row['yearly_budget'] or 0):,.2f}</td>"
-            f"<td class='num'>{float(row['year_to_date'] or 0):,.2f}</td>"
-            "</tr>"
+            table_rows.append([f"Category: {current_category or ''}", "", "", ""])
+        table_rows.append(
+            [
+                str(row["account_code"] or ""),
+                str(row["account_name"] or ""),
+                f"{float(row['yearly_budget'] or 0):,.2f}",
+                f"{float(row['year_to_date'] or 0):,.2f}",
+            ]
         )
 
-    html = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <title>Year-End Financial Summary</title>
-      <style>
-        body {{ font-family: Georgia, serif; margin: 24px; color: #111827; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 18px; }}
-        th, td {{ border: 1px solid #cbd5e1; padding: 6px 8px; text-align: left; font-size: 13px; }}
-        .num {{ text-align: right; }}
-        .category td {{ background: #e5ecf6; font-weight: bold; }}
-      </style>
-    </head>
-    <body>
-      <h1>Year-End Financial Summary</h1>
-      <div>Fiscal year: {escape(fiscal_year)}</div>
-      <table>
-        <thead>
-          <tr>
-            <th>Code</th>
-            <th>Account</th>
-            <th>Annual Budget</th>
-            <th>Year To Date</th>
-          </tr>
-        </thead>
-        <tbody>
-          {''.join(lines)}
-        </tbody>
-      </table>
-    </body>
-    </html>
-    """
-    file_path.write_text(html, encoding="utf-8")
-    return file_path
+    story = build_report_story("Year-End Financial Summary", [f"Fiscal year: {fiscal_year}"])
+    table = build_table(table_rows, [0.7 * inch, 3.1 * inch, 1.15 * inch, 1.15 * inch])
+    category_rows = [index for index, row in enumerate(table_rows) if row[1] == "" and index > 0]
+    styles = [("ALIGN", (2, 1), (3, -1), "RIGHT")]
+    for index in category_rows:
+        styles.extend(
+            [
+                ("SPAN", (0, index), (-1, index)),
+                ("BACKGROUND", (0, index), (-1, index), colors.HexColor("#e5ecf6")),
+                ("FONTNAME", (0, index), (-1, index), "Helvetica-Bold"),
+            ]
+        )
+    table.setStyle(TableStyle(styles))
+    story.append(table)
+    return build_story_pdf(output_path, story, title="Year-End Financial Summary")
 
 
-def render_budget_report_html(db_path: Path, fiscal_year: str, output_dir: Path) -> Path:
+def render_budget_report_pdf(db_path: Path, fiscal_year: str, output_dir: Path) -> Path:
     with get_connection(db_path) as connection:
         rows = connection.execute(
             """
@@ -836,57 +795,37 @@ def render_budget_report_html(db_path: Path, fiscal_year: str, output_dir: Path)
             [fiscal_year],
         ).fetchall()
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    file_path = output_dir / f"financial_budget_{fiscal_year}_{date.today().strftime('%m-%d-%y')}.html"
-    lines = []
+    output_path = build_pdf_path(
+        output_dir,
+        f"financial_budget_{fiscal_year}_{date.today().strftime('%m-%d-%y')}",
+    )
+    table_rows: list[list[object]] = [["Code", "Account", "Monthly Budget", "Yearly Budget"]]
     current_category = None
     for row in rows:
         if row["category"] != current_category:
             current_category = row["category"]
-            lines.append(f"<tr class='category'><td colspan='4'>{escape(current_category or '')}</td></tr>")
-        lines.append(
-            "<tr>"
-            f"<td>{escape(row['account_code'] or '')}</td>"
-            f"<td>{escape(row['account_name'] or '')}</td>"
-            f"<td class='num'>{float(row['monthly_budget'] or 0):,.2f}</td>"
-            f"<td class='num'>{float(row['yearly_budget'] or 0):,.2f}</td>"
-            "</tr>"
+            table_rows.append([f"Category: {current_category or ''}", "", "", ""])
+        table_rows.append(
+            [
+                str(row["account_code"] or ""),
+                str(row["account_name"] or ""),
+                f"{float(row['monthly_budget'] or 0):,.2f}",
+                f"{float(row['yearly_budget'] or 0):,.2f}",
+            ]
         )
 
-    html = f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <title>Budget Report</title>
-      <style>
-        body {{ font-family: Georgia, serif; margin: 24px; color: #111827; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 18px; }}
-        th, td {{ border: 1px solid #cbd5e1; padding: 6px 8px; text-align: left; font-size: 13px; }}
-        .num {{ text-align: right; }}
-        .category td {{ background: #e5ecf6; font-weight: bold; }}
-      </style>
-    </head>
-    <body>
-      <h1>Budget Report</h1>
-      <div>Fiscal year: {escape(fiscal_year)}</div>
-      <table>
-        <thead>
-          <tr>
-            <th>Code</th>
-            <th>Account</th>
-            <th>Monthly Budget</th>
-            <th>Yearly Budget</th>
-          </tr>
-        </thead>
-        <tbody>{''.join(lines)}</tbody>
-      </table>
-    </body>
-    </html>
-    """
-    file_path.write_text(html, encoding="utf-8")
-    return file_path
-
-
-def convert_financial_report_to_pdf(html_path: Path) -> Path:
-    return convert_html_to_pdf(html_path, "Failed to convert report to PDF.")
+    story = build_report_story("Budget Report", [f"Fiscal year: {fiscal_year}"])
+    table = build_table(table_rows, [0.7 * inch, 3.1 * inch, 1.15 * inch, 1.15 * inch])
+    category_rows = [index for index, row in enumerate(table_rows) if row[1] == "" and index > 0]
+    styles = [("ALIGN", (2, 1), (3, -1), "RIGHT")]
+    for index in category_rows:
+        styles.extend(
+            [
+                ("SPAN", (0, index), (-1, index)),
+                ("BACKGROUND", (0, index), (-1, index), colors.HexColor("#e5ecf6")),
+                ("FONTNAME", (0, index), (-1, index), "Helvetica-Bold"),
+            ]
+        )
+    table.setStyle(TableStyle(styles))
+    story.append(table)
+    return build_story_pdf(output_path, story, title="Budget Report")

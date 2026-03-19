@@ -38,7 +38,7 @@ Deployment notes are in `docs/deployment.md`.
 
 ## PDF Output
 
-PDF output currently depends on LibreOffice being installed on the target machine.
+PDF output is generated directly by the app with ReportLab. LibreOffice is not required.
 
 After install, use:
 
