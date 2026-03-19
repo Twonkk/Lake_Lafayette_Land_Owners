@@ -146,22 +146,22 @@ def launch_update_installer(installer_path: Path, updates_dir: Path, current_pid
         raise RuntimeError("Automatic installer handoff is only supported on Windows.")
 
     updates_dir.mkdir(parents=True, exist_ok=True)
-    script_path = updates_dir / "run_update.cmd"
+    script_path = updates_dir / "run_update.ps1"
+    log_path = updates_dir / "update_handoff.log"
+    installer_literal = str(installer).replace("'", "''")
+    log_literal = str(log_path).replace("'", "''")
     script_path.write_text(
         "\n".join(
             [
-                "@echo off",
-                "setlocal",
-                f"set TARGET_PID={int(current_pid)}",
-                f'set INSTALLER={str(installer)}',
-                ":waitloop",
-                'tasklist /FI "PID eq %TARGET_PID%" | find "%TARGET_PID%" >nul',
-                "if not errorlevel 1 (",
-                "  timeout /t 1 /nobreak >nul",
-                "  goto waitloop",
-                ")",
-                'start "" "%INSTALLER%"',
-                "endlocal",
+                f"$targetPid = {int(current_pid)}",
+                f"$installer = '{installer_literal}'",
+                f"$logPath = '{log_literal}'",
+                'Add-Content -Path $logPath -Value "$(Get-Date -Format s) update handoff started for PID $targetPid"',
+                "while (Get-Process -Id $targetPid -ErrorAction SilentlyContinue) {",
+                "  Start-Sleep -Seconds 1",
+                "}",
+                'Add-Content -Path $logPath -Value "$(Get-Date -Format s) launching installer $installer"',
+                'Start-Process -FilePath $installer',
             ]
         ),
         encoding="utf-8",
@@ -174,7 +174,16 @@ def launch_update_installer(installer_path: Path, updates_dir: Path, current_pid
         creationflags |= subprocess.DETACHED_PROCESS
 
     subprocess.Popen(
-        ["cmd", "/c", str(script_path)],
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-File",
+            str(script_path),
+        ],
         cwd=str(updates_dir),
         creationflags=creationflags,
         close_fds=True,
