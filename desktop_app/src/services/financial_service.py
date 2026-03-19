@@ -577,7 +577,7 @@ def render_monthly_financial_report_pdf(
     output_dir: Path,
 ) -> Path:
     with get_connection(db_path) as connection:
-        rows = connection.execute(
+        result_rows = connection.execute(
             """
             SELECT
                 a.category,
@@ -602,7 +602,7 @@ def render_monthly_financial_report_pdf(
         output_dir,
         f"financial_month_{fiscal_year}_{fiscal_month}_{date.today().strftime('%m-%d-%y')}",
     )
-    rows: list[list[object]] = [[
+    table_rows: list[list[object]] = [[
         "Code",
         "Account",
         "Annual Budget",
@@ -612,11 +612,11 @@ def render_monthly_financial_report_pdf(
         "Year To Date",
     ]]
     current_category = None
-    for row in rows:
+    for row in result_rows:
         if row["category"] != current_category:
             current_category = row["category"]
-            rows.append([f"Category: {current_category or ''}", "", "", "", "", "", ""])
-        rows.append(
+            table_rows.append([f"Category: {current_category or ''}", "", "", "", "", "", ""])
+        table_rows.append(
             [
                 str(row["account_code"] or ""),
                 str(row["account_name"] or ""),
@@ -633,10 +633,10 @@ def render_monthly_financial_report_pdf(
         [f"Fiscal year: {fiscal_year}", f"Fiscal month: {fiscal_month}"],
     )
     table = build_table(
-        rows,
+        table_rows,
         [0.55 * inch, 2.1 * inch, 1.0 * inch, 1.0 * inch, 0.95 * inch, 0.95 * inch, 0.95 * inch],
     )
-    category_rows = [index for index, row in enumerate(rows) if row[1] == "" and index > 0]
+    category_rows = [index for index, row in enumerate(table_rows) if row[1] == "" and index > 0]
     styles = [("ALIGN", (2, 1), (6, -1), "RIGHT")]
     for index in category_rows:
         styles.extend(
