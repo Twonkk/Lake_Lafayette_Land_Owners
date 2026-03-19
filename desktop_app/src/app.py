@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -25,7 +24,7 @@ from src.services.import_service import (
     validate_legacy_directory,
 )
 from src.services.logging_service import get_logger
-from src.services.update_service import check_for_updates, download_update_asset, launch_update_installer
+from src.services.update_service import check_for_updates, download_update_asset
 from src.ui.assessments import AssessmentsFrame
 from src.ui.cards_stickers import CardsStickersFrame
 from src.ui.dashboard import DashboardFrame
@@ -427,34 +426,60 @@ class LakeLotApp(tk.Tk):
             messagebox.showerror("Update download failed", str(exc))
             return
 
+        choice = messagebox.askyesnocancel(
+            "Update ready",
+            "\n".join(
+                [
+                    f"The installer was downloaded to:",
+                    str(installer_path),
+                    "",
+                    "Yes: open the installer now",
+                    "No: open the updates folder instead",
+                    "Cancel: leave it downloaded and do nothing",
+                ]
+            ),
+        )
+        if choice is None:
+            return
+
         try:
-            launch_update_installer(installer_path, self.paths.updates_dir, os.getpid())
-            self.logger.info("Queued installer handoff: %s", installer_path)
+            if choice:
+                open_with_default_app(installer_path)
+                self.logger.info("Opened downloaded installer: %s", installer_path)
+                messagebox.showinfo(
+                    "Installer opened",
+                    "\n".join(
+                        [
+                            "The installer was opened.",
+                            "If Windows asks you to close the app first, close it and continue the update.",
+                        ]
+                    ),
+                )
+            else:
+                open_with_default_app(self.paths.updates_dir)
+                self.logger.info("Opened updates folder: %s", self.paths.updates_dir)
+                messagebox.showinfo(
+                    "Updates folder opened",
+                    "\n".join(
+                        [
+                            "The updates folder was opened.",
+                            "Close the app when you are ready, then run the downloaded installer.",
+                        ]
+                    ),
+                )
         except Exception as exc:
-            self.logger.exception("Failed to queue downloaded installer")
+            self.logger.exception("Failed to open downloaded update")
             messagebox.showerror(
-                "Installer handoff failed",
+                "Open update failed",
                 "\n".join(
                     [
-                        "The installer was downloaded, but the update handoff could not be started automatically.",
+                        "The installer was downloaded, but it could not be opened automatically.",
                         str(installer_path),
                         "",
                         str(exc),
                     ]
                 ),
             )
-            return
-
-        messagebox.showinfo(
-            "Closing for update",
-            "\n".join(
-                [
-                    "The app will close now.",
-                    "The installer should open automatically after the app exits.",
-                ]
-            ),
-        )
-        self.after(100, self.destroy)
 
     def report_callback_exception(self, exc, val, tb) -> None:
         self.logger.error(
