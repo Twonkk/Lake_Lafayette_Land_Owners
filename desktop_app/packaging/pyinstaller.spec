@@ -39,3 +39,12 @@ exe = EXE(
     upx=True,
     console=False,
 )
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    name="LakeLotManager",
+)
