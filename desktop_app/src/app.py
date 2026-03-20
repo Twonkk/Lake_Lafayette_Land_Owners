@@ -496,6 +496,22 @@ class LakeLotApp(tk.Tk):
             ),
         )
 
+    def _center_dialog(self, dialog: tk.Toplevel) -> None:
+        self.update_idletasks()
+        dialog.update_idletasks()
+
+        parent_x = self.winfo_rootx()
+        parent_y = self.winfo_rooty()
+        parent_width = self.winfo_width()
+        parent_height = self.winfo_height()
+
+        dialog_width = dialog.winfo_reqwidth()
+        dialog_height = dialog.winfo_reqheight()
+
+        x = parent_x + max((parent_width - dialog_width) // 2, 0)
+        y = parent_y + max((parent_height - dialog_height) // 2, 0)
+        dialog.geometry(f"+{x}+{y}")
+
     def show_help(self, help_key: str, first_time: bool) -> None:
         help_info = get_screen_help(help_key)
         if help_info is None:
@@ -551,6 +567,7 @@ class LakeLotApp(tk.Tk):
             dialog.destroy()
 
         ttk.Button(body, text="Close", command=close_dialog).grid(row=len(help_info.actions) + 3, column=0, sticky="e")
+        self._center_dialog(dialog)
 
 
 def launch() -> None:

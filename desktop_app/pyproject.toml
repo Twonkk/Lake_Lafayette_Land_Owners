@@ -1,6 +1,6 @@
 [project]
 name = "lake-lot-desktop"
-version = "0.1.15"
+version = "0.1.16"
 description = "Desktop replacement for the legacy dBase lot and financial system."
 readme = "README.md"
 requires-python = ">=3.12"
