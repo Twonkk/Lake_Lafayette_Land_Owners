@@ -1,5 +1,7 @@
 from pathlib import Path
 import sqlite3
+from contextlib import closing, contextmanager
+from collections.abc import Iterator
 
 from src.db.schema import SCHEMA_STATEMENTS
 
@@ -15,6 +17,9 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
         "payment_method": "TEXT",
         "pc_transaction_number": "TEXT",
         "disposition": "TEXT",
+        # Existing pre-migration transactions came from TRANSFIL.DBF.
+        # New databases use the schema's 'app' default for newly posted rows.
+        "source": "TEXT NOT NULL DEFAULT 'legacy'",
     },
     "financial_monthly": {
         "fiscal_year": "TEXT",
@@ -110,16 +115,21 @@ def _run_migrations(connection: sqlite3.Connection) -> None:
 
 def initialize_database(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as connection:
+    with closing(sqlite3.connect(db_path)) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
-        for statement in SCHEMA_STATEMENTS:
-            connection.execute(statement)
-        _run_migrations(connection)
-        connection.commit()
+        with connection:
+            for statement in SCHEMA_STATEMENTS:
+                connection.execute(statement)
+            _run_migrations(connection)
 
 
-def get_connection(db_path: Path) -> sqlite3.Connection:
+@contextmanager
+def get_connection(db_path: Path) -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
-    return connection
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()

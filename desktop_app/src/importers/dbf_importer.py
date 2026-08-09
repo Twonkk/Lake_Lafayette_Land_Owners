@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from contextlib import closing
 import sqlite3
 import struct
 
@@ -158,12 +159,16 @@ def import_legacy_directory(source_dir: Path, sqlite_path: Path) -> dict[str, in
     financial_accounts = _read_dbf(source_dir / "STDBUDFL.DBF")
     financial_monthly = _read_dbf(source_dir / "INEXFILE.DBF")
     financial_transactions = _read_dbf(source_dir / "TRANSFIL.DBF")
+    legacy_property_sales = _read_dbf(source_dir / "EXLOTFIL.DBF")
+    legacy_id_history = _read_dbf(source_dir / "IDFILE.DBF")
+    legacy_collection_lots = _read_dbf(source_dir / "CLTRUST.DBF")
+    legacy_system_history = _read_dbf(source_dir / "PERMFILE.DBF")
     default_financial_year = _default_financial_year(financial_accounts, financial_transactions)
 
     started_at = datetime.now().isoformat(timespec="seconds")
     sqlite_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with sqlite3.connect(sqlite_path) as connection:
+    with closing(sqlite3.connect(sqlite_path)) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         run_id = connection.execute(
             """
@@ -177,6 +182,10 @@ def import_legacy_directory(source_dir: Path, sqlite_path: Path) -> dict[str, in
         ).lastrowid
 
         for table in [
+            "legacy_property_sales",
+            "legacy_id_history",
+            "legacy_collection_lots",
+            "legacy_system_history",
             "property_sales",
             "payment_audit",
             "assessment_runs",
@@ -563,13 +572,9 @@ def import_legacy_directory(source_dir: Path, sqlite_path: Path) -> dict[str, in
                 continue
             entry_date = _parse_char_date(_as_text(row.get("ENTRYDATE")) or "")
             transaction_date = _parse_char_date(_as_text(row.get("TRANSDATE")) or "")
-            fiscal_year = ""
-            if transaction_date and len(transaction_date) >= 4:
-                fiscal_year = transaction_date[:4]
-            elif entry_date and len(entry_date) >= 4:
-                fiscal_year = entry_date[:4]
-            else:
-                fiscal_year = account_year_map.get(account_code, default_financial_year)
+            # TRANSFIL has no fiscal-year column. The account's explicit dBase
+            # fiscal year is authoritative; transaction dates are calendar dates.
+            fiscal_year = account_year_map.get(account_code, default_financial_year)
             transaction_rows.append(
                 (
                     _as_text(row.get("TRANSNMBR")),
@@ -612,10 +617,93 @@ def import_legacy_directory(source_dir: Path, sqlite_path: Path) -> dict[str, in
                 pc_transaction_number,
                 disposition,
                 transaction_type,
-                status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                status,
+                source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'legacy')
             """,
             transaction_rows,
+        )
+
+        legacy_sale_rows = [
+            (
+                _as_text(row.get("LOT_NUMBER")),
+                _parse_char_date(_as_text(row.get("SALE_DATE")) or ""),
+                _owner_code(row.get("SELR_CODE")),
+                _owner_code(row.get("BUYR_CODE")),
+                _parse_char_date(_as_text(row.get("ENTER_DATE")) or ""),
+            )
+            for row in legacy_property_sales
+        ]
+        connection.executemany(
+            """
+            INSERT INTO legacy_property_sales (
+                lot_number, sale_date, seller_owner_code, buyer_owner_code, entered_date
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            legacy_sale_rows,
+        )
+
+        legacy_id_rows = [
+            (
+                _owner_code(row.get("OWNR_CODE")),
+                _as_text(row.get("LAST_NAME")),
+                row.get("DATE"),
+                _as_text(row.get("LOT_NUMBER")),
+                int(row.get("OWNRCRDS") or 0),
+                int(row.get("RNTRCRDS") or 0),
+                int(row.get("YEAR") or 0),
+                _as_text(row.get("DONE")),
+                int(row.get("BOAT") or 0),
+                _parse_char_date(_as_text(row.get("BDATE")) or ""),
+            )
+            for row in legacy_id_history
+        ]
+        connection.executemany(
+            """
+            INSERT INTO legacy_id_history (
+                owner_code, last_name, issue_date, lot_number, owner_cards,
+                renter_cards, issue_year, completed_flag, boat_stickers, boat_date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            legacy_id_rows,
+        )
+
+        legacy_collection_rows = sorted(
+            {
+                (_as_text(row.get("LOTNMBR")),)
+                for row in legacy_collection_lots
+                if _as_text(row.get("LOTNMBR"))
+            }
+        )
+        connection.executemany(
+            "INSERT INTO legacy_collection_lots (lot_number) VALUES (?)",
+            legacy_collection_rows,
+        )
+
+        legacy_system_rows = [
+            (
+                _parse_char_date(_as_text(row.get("ASMT_REVDT")) or ""),
+                _parse_char_date(_as_text(row.get("TRANS_DATE")) or ""),
+                _as_text(row.get("TRANS_TYPE")),
+                int(row.get("OREC_REVSD") or 0),
+                int(row.get("AREC_REVSD") or 0),
+                _as_money(row.get("TOT_AMNT")),
+                _parse_char_date(_as_text(row.get("CUR_DATE")) or ""),
+                _as_text(row.get("PD_THRU")),
+                _as_text(row.get("SEASON")),
+                _as_text(row.get("YEAR")),
+            )
+            for row in legacy_system_history
+        ]
+        connection.executemany(
+            """
+            INSERT INTO legacy_system_history (
+                assessment_review_date, transaction_date, transaction_type,
+                owner_records_revised, assessment_records_revised, total_amount,
+                current_date, paid_through, season, year
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            legacy_system_rows,
         )
 
         connection.execute(
@@ -653,6 +741,10 @@ def import_legacy_directory(source_dir: Path, sqlite_path: Path) -> dict[str, in
         "financial_accounts_imported": len(account_rows),
         "financial_monthly_imported": len(monthly_rows),
         "financial_transactions_imported": len(transaction_rows),
+        "legacy_property_sales_imported": len(legacy_sale_rows),
+        "legacy_id_history_imported": len(legacy_id_rows),
+        "legacy_collection_lots_imported": len(legacy_collection_rows),
+        "legacy_system_history_imported": len(legacy_system_rows),
     }
 
 
@@ -666,7 +758,7 @@ def import_legacy_financials_only(source_dir: Path, sqlite_path: Path) -> dict[s
     default_financial_year = _default_financial_year(financial_accounts, financial_transactions)
 
     sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(sqlite_path) as connection:
+    with closing(sqlite3.connect(sqlite_path)) as connection:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("DELETE FROM financial_transactions")
         connection.execute("DELETE FROM financial_monthly")
@@ -754,13 +846,7 @@ def import_legacy_financials_only(source_dir: Path, sqlite_path: Path) -> dict[s
                 continue
             entry_date = _parse_char_date(_as_text(row.get("ENTRYDATE")) or "")
             transaction_date = _parse_char_date(_as_text(row.get("TRANSDATE")) or "")
-            fiscal_year = ""
-            if transaction_date and len(transaction_date) >= 4:
-                fiscal_year = transaction_date[:4]
-            elif entry_date and len(entry_date) >= 4:
-                fiscal_year = entry_date[:4]
-            else:
-                fiscal_year = account_year_map.get(account_code, default_financial_year)
+            fiscal_year = account_year_map.get(account_code, default_financial_year)
             transaction_rows.append(
                 (
                     _as_text(row.get("TRANSNMBR")),
@@ -803,8 +889,9 @@ def import_legacy_financials_only(source_dir: Path, sqlite_path: Path) -> dict[s
                 pc_transaction_number,
                 disposition,
                 transaction_type,
-                status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                status,
+                source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'legacy')
             """,
             transaction_rows,
         )

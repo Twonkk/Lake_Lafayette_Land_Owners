@@ -144,6 +144,7 @@ SCHEMA_STATEMENTS = [
         disposition TEXT,
         transaction_type TEXT,
         status TEXT,
+        source TEXT NOT NULL DEFAULT 'app',
         FOREIGN KEY (account_code) REFERENCES financial_accounts(account_code)
     )
     """,
@@ -257,6 +258,55 @@ SCHEMA_STATEMENTS = [
         backup_path TEXT,
         FOREIGN KEY (owner_code) REFERENCES owners(owner_code),
         FOREIGN KEY (lot_number) REFERENCES lots(lot_number)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS legacy_property_sales (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        lot_number TEXT,
+        sale_date TEXT,
+        seller_owner_code TEXT,
+        buyer_owner_code TEXT,
+        entered_date TEXT,
+        source_file TEXT NOT NULL DEFAULT 'EXLOTFIL.DBF'
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS legacy_id_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_code TEXT,
+        last_name TEXT,
+        issue_date TEXT,
+        lot_number TEXT,
+        owner_cards INTEGER DEFAULT 0,
+        renter_cards INTEGER DEFAULT 0,
+        issue_year INTEGER,
+        completed_flag TEXT,
+        boat_stickers INTEGER DEFAULT 0,
+        boat_date TEXT,
+        source_file TEXT NOT NULL DEFAULT 'IDFILE.DBF'
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS legacy_collection_lots (
+        lot_number TEXT PRIMARY KEY,
+        source_file TEXT NOT NULL DEFAULT 'CLTRUST.DBF'
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS legacy_system_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        assessment_review_date TEXT,
+        transaction_date TEXT,
+        transaction_type TEXT,
+        owner_records_revised INTEGER,
+        assessment_records_revised INTEGER,
+        total_amount NUMERIC,
+        current_date TEXT,
+        paid_through TEXT,
+        season TEXT,
+        year TEXT,
+        source_file TEXT NOT NULL DEFAULT 'PERMFILE.DBF'
     )
     """,
 ]

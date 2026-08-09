@@ -26,6 +26,7 @@ build/
 scripts/.git/
 payments.png
 dbase/
+dbase*.zip
 
 # Client sample and personal-information files
 print_samples/**/*.png

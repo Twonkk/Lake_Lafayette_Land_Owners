@@ -323,6 +323,11 @@ class LakeLotApp(tk.Tk):
                     f"Financial accounts: {result.financial_accounts_imported}",
                     f"Financial monthly rows: {result.financial_monthly_imported}",
                     f"Financial transactions: {result.financial_transactions_imported}",
+                    f"Legacy property sales: {result.legacy_property_sales_imported}",
+                    f"Legacy ID/boat history: {result.legacy_id_history_imported}",
+                    f"Legacy collection lots: {result.legacy_collection_lots_imported}",
+                    f"Legacy system history: {result.legacy_system_history_imported}",
+                    f"Pre-import backup: {result.backup_path or 'not needed'}",
                 ]
             ),
         )
@@ -331,7 +336,10 @@ class LakeLotApp(tk.Tk):
     def refresh_from_legacy_data(self) -> None:
         confirm = messagebox.askyesno(
             "Refresh From dBase",
-            "This will re-import the current dBase data into the app database.\n\nUse this only while dBase is still the source of truth.",
+            "This will re-import the current dBase data into the app database.\n\n"
+            "A full backup will be created first. Refresh will stop automatically if "
+            "activity has already been recorded in the new app.\n\n"
+            "Use this only while dBase is still the source of truth.",
         )
         if not confirm:
             return

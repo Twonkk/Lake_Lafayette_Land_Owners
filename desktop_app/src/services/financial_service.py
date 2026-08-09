@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+import shutil
 
 from reportlab.lib import colors
 from reportlab.lib.units import inch
@@ -22,6 +23,7 @@ TRANSACTION_TYPES = {
 @dataclass(slots=True)
 class FinancialTransactionRequest:
     account_code: str
+    fiscal_year: str
     month_number: int
     transaction_date: str
     transaction_type: str
@@ -63,6 +65,15 @@ class MonthCloseResult:
 
 def default_financial_date() -> str:
     return date.today().isoformat()
+
+
+def _make_backup(db_path: Path, operation: str) -> Path:
+    backup_dir = db_path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    backup_path = backup_dir / f"{db_path.stem}_financial_{operation}_{stamp}.sqlite3"
+    shutil.copy2(db_path, backup_path)
+    return backup_path
 
 
 def active_fiscal_year(db_path: Path) -> str:
@@ -113,7 +124,11 @@ def post_financial_transaction(db_path: Path, request: FinancialTransactionReque
         raise ValueError("Amount must be greater than zero.")
     if request.month_number < 1 or request.month_number > 12:
         raise ValueError("Month must be between 1 and 12.")
+    fiscal_year = request.fiscal_year.strip()
+    if not fiscal_year:
+        raise ValueError("Fiscal year is required.")
 
+    _make_backup(db_path, "transaction")
     with get_connection(db_path) as connection:
         account = connection.execute(
             """
@@ -133,7 +148,7 @@ def post_financial_transaction(db_path: Path, request: FinancialTransactionReque
             WHERE account_code = ? AND fiscal_month = ?
               AND COALESCE(fiscal_year, '') = ?
             """,
-            [request.account_code, request.month_number, str(request.transaction_date)[:4]],
+            [request.account_code, request.month_number, fiscal_year],
         ).fetchone()
         if month_row is None:
             raise ValueError("Monthly account record was not found.")
@@ -178,12 +193,13 @@ def post_financial_transaction(db_path: Path, request: FinancialTransactionReque
                 pc_transaction_number,
                 disposition,
                 transaction_type,
-                status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                status,
+                source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'app')
             """,
             [
                 str(next_number),
-                str(request.transaction_date)[:4],
+                fiscal_year,
                 request.month_number,
                 request.transaction_date,
                 request.transaction_date,
@@ -215,7 +231,7 @@ def post_financial_transaction(db_path: Path, request: FinancialTransactionReque
                 year_to_date,
                 request.account_code,
                 request.month_number,
-                str(request.transaction_date)[:4],
+                fiscal_year,
             ],
         )
         connection.commit()
@@ -239,6 +255,7 @@ def add_financial_account(db_path: Path, request: FinancialAccountRequest) -> No
         if existing is not None:
             raise ValueError("That account code already exists.")
 
+        _make_backup(db_path, "add_account")
         connection.execute("BEGIN")
         connection.execute(
             """
@@ -300,6 +317,7 @@ def rename_financial_account(db_path: Path, account_code: str, account_name: str
         raise ValueError("Account name is required.")
     if not category.strip():
         raise ValueError("Category is required.")
+    _make_backup(db_path, "edit_account")
     with get_connection(db_path) as connection:
         updated = connection.execute(
             """
@@ -331,6 +349,7 @@ def delete_financial_account(db_path: Path, account_code: str) -> None:
             raise ValueError("Account not found.")
         if float(row["yearly_budget"] or 0) != 0 or float(row["year_to_date"] or 0) != 0:
             raise ValueError("This account is active and may not be deleted.")
+        _make_backup(db_path, "delete_account")
         connection.execute("BEGIN")
         connection.execute("DELETE FROM financial_monthly WHERE account_code = ?", [account_code])
         connection.execute("DELETE FROM financial_accounts WHERE account_code = ?", [account_code])
@@ -340,6 +359,7 @@ def delete_financial_account(db_path: Path, account_code: str) -> None:
 def update_financial_budget(db_path: Path, request: FinancialBudgetUpdateRequest) -> None:
     if request.monthly_budget < 0 or request.yearly_budget < 0:
         raise ValueError("Budget amounts cannot be negative.")
+    _make_backup(db_path, "budget")
     with get_connection(db_path) as connection:
         updated = connection.execute(
             """
@@ -418,6 +438,7 @@ def create_new_fiscal_year(db_path: Path, source_year: str, target_year: str) ->
         if not source_accounts:
             raise ValueError(f"No financial data found for fiscal year {source_year}.")
 
+        _make_backup(db_path, "new_fiscal_year")
         connection.execute("BEGIN")
         inserted_rows = 0
         for account in source_accounts:
@@ -511,6 +532,7 @@ def close_financial_month(db_path: Path, fiscal_year: str, fiscal_month: int) ->
                 f"Next fiscal period {next_year} month {next_month} does not exist. Create the next fiscal year first if needed."
             )
 
+        _make_backup(db_path, "close_month")
         connection.execute("BEGIN")
         connection.execute(
             """

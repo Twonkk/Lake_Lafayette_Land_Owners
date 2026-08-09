@@ -1,5 +1,7 @@
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+import shutil
 
 from src.db.connection import get_connection
 from src.importers.dbf_importer import import_legacy_directory, import_legacy_financials_only
@@ -15,6 +17,11 @@ class ImportResult:
     financial_accounts_imported: int = 0
     financial_monthly_imported: int = 0
     financial_transactions_imported: int = 0
+    legacy_property_sales_imported: int = 0
+    legacy_id_history_imported: int = 0
+    legacy_collection_lots_imported: int = 0
+    legacy_system_history_imported: int = 0
+    backup_path: str = ""
 
 
 REQUIRED_LEGACY_FILES = [
@@ -26,7 +33,44 @@ REQUIRED_LEGACY_FILES = [
     "STDBUDFL.DBF",
     "INEXFILE.DBF",
     "TRANSFIL.DBF",
+    "EXLOTFIL.DBF",
+    "IDFILE.DBF",
+    "CLTRUST.DBF",
+    "PERMFILE.DBF",
 ]
+
+
+def native_activity_counts(sqlite_path: Path) -> dict[str, int]:
+    """Return app-native activity that a destructive dBase refresh would replace."""
+    tables = [
+        "payment_audit",
+        "assessment_runs",
+        "property_sales",
+        "boat_sticker_purchases",
+        "id_card_issues",
+    ]
+    with get_connection(sqlite_path) as connection:
+        counts = {
+            table: int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+            for table in tables
+        }
+        counts["financial_transactions"] = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM financial_transactions WHERE COALESCE(source, 'legacy') = 'app'"
+            ).fetchone()[0]
+        )
+        return counts
+
+
+def _backup_before_import(sqlite_path: Path) -> Path | None:
+    if not sqlite_path.exists() or sqlite_path.stat().st_size == 0:
+        return None
+    backup_dir = sqlite_path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    backup_path = backup_dir / f"{sqlite_path.stem}_before_legacy_import_{stamp}.sqlite3"
+    shutil.copy2(sqlite_path, backup_path)
+    return backup_path
 
 
 def database_has_core_data(sqlite_path: Path) -> bool:
@@ -45,7 +89,21 @@ def validate_legacy_directory(source_dir: Path) -> list[str]:
     return missing
 
 
-def run_legacy_import(source_dir: Path, sqlite_path: Path) -> ImportResult:
+def run_legacy_import(
+    source_dir: Path,
+    sqlite_path: Path,
+    *,
+    allow_native_activity: bool = False,
+) -> ImportResult:
+    activity = native_activity_counts(sqlite_path)
+    active = {name: count for name, count in activity.items() if count}
+    if active and not allow_native_activity:
+        summary = ", ".join(f"{name}={count}" for name, count in active.items())
+        raise RuntimeError(
+            "Refresh stopped because this database contains activity recorded in the new app "
+            f"({summary}). Restore/merge must be reviewed before replacing it from dBase."
+        )
+    backup_path = _backup_before_import(sqlite_path)
     result = import_legacy_directory(source_dir=source_dir, sqlite_path=sqlite_path)
     return ImportResult(
         owners_imported=result["owners_imported"],
@@ -56,6 +114,11 @@ def run_legacy_import(source_dir: Path, sqlite_path: Path) -> ImportResult:
         financial_accounts_imported=result.get("financial_accounts_imported", 0),
         financial_monthly_imported=result.get("financial_monthly_imported", 0),
         financial_transactions_imported=result.get("financial_transactions_imported", 0),
+        legacy_property_sales_imported=result.get("legacy_property_sales_imported", 0),
+        legacy_id_history_imported=result.get("legacy_id_history_imported", 0),
+        legacy_collection_lots_imported=result.get("legacy_collection_lots_imported", 0),
+        legacy_system_history_imported=result.get("legacy_system_history_imported", 0),
+        backup_path=str(backup_path or ""),
     )
 
 

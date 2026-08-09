@@ -526,6 +526,7 @@ class FinancialsFrame(ttk.Frame):
 
         request = FinancialTransactionRequest(
             account_code=self.account_var.get().strip().upper(),
+            fiscal_year=self.year_var.get().strip(),
             month_number=int(self.month_var.get()),
             transaction_date=self.date_var.get().strip(),
             transaction_type=self.type_var.get().strip(),
