@@ -10,10 +10,12 @@ from src.runtime import (
     bootstrap_existing_local_database,
     ensure_runtime_dirs,
     has_seen_screen_help,
+    load_navigation_mode,
     reset_seen_screen_help,
     resolve_app_paths,
     save_seen_screen_help,
     save_legacy_dir,
+    save_navigation_mode,
     open_with_default_app,
 )
 from src.services.help_service import get_screen_help
@@ -27,6 +29,7 @@ from src.services.logging_service import get_logger
 from src.services.update_service import check_for_updates, download_update_asset
 from src.ui.assessments import AssessmentsFrame
 from src.ui.cards_stickers import CardsStickersFrame
+from src.ui.classic_menu import ClassicMenuFrame
 from src.ui.dashboard import DashboardFrame
 from src.ui.financials import FinancialsFrame
 from src.ui.import_setup import ImportSetupFrame
@@ -67,6 +70,7 @@ class LakeLotApp(tk.Tk):
         self.sidebar: ttk.Frame | None = None
         self.screen_title_var = tk.StringVar(value="Modern desktop replacement")
         self.current_help_key: str | None = None
+        self.navigation_mode = load_navigation_mode(self.paths.update_config_path)
 
         self.configure(background="#f3efe7")
         self.style = ttk.Style(self)
@@ -117,6 +121,19 @@ class LakeLotApp(tk.Tk):
             foreground="#ffffff",
             padding=(12, 8),
         )
+        self.style.configure(
+            "Classic.TButton",
+            background="#ffffff",
+            foreground="#1d2430",
+            padding=(10, 4),
+            anchor="w",
+            font=("TkDefaultFont", 10),
+        )
+        self.style.map(
+            "Classic.TButton",
+            background=[("active", "#dbeafe")],
+            foreground=[("active", "#173b63")],
+        )
 
     def _build_shell(self) -> None:
         self.columnconfigure(1, weight=1)
@@ -149,7 +166,8 @@ class LakeLotApp(tk.Tk):
             buttons = [("Initial Setup", self.show_import_setup)]
         else:
             buttons = [
-                ("Dashboard", self.show_dashboard),
+                ("Classic Menu", lambda: self.choose_navigation_mode("classic")),
+                ("Simple Home", lambda: self.choose_navigation_mode("simple")),
                 ("Owners and Lots", self.show_owner_lot),
                 ("Payments", self.show_payments),
                 ("Property Sales", self.show_property_sales),
@@ -192,6 +210,8 @@ class LakeLotApp(tk.Tk):
 
         if self.initial_setup_required:
             self.show_import_setup()
+        elif self.navigation_mode == "classic":
+            self.show_classic_menu()
         else:
             self.show_dashboard()
 
@@ -209,7 +229,43 @@ class LakeLotApp(tk.Tk):
             self.after(150, lambda: self.show_help(help_key, first_time=True))
 
     def show_dashboard(self) -> None:
-        self._set_screen("Home", lambda parent: DashboardFrame(parent, self.db_path), help_key="dashboard")
+        self._set_screen("Simple Home", lambda parent: DashboardFrame(parent, self.db_path), help_key="dashboard")
+
+    def show_classic_menu(self) -> None:
+        self._set_screen(
+            "Classic Menu",
+            lambda parent: ClassicMenuFrame(parent, self.navigate_to),
+            help_key="classic_menu",
+        )
+
+    def choose_navigation_mode(self, mode: str) -> None:
+        self.navigation_mode = mode
+        save_navigation_mode(self.paths.update_config_path, mode)
+        if mode == "classic":
+            self.show_classic_menu()
+        else:
+            self.show_dashboard()
+
+    def navigate_to(self, destination: str) -> None:
+        actions = {
+            "owners_lots": self.show_owner_lot,
+            "payments": self.show_payments,
+            "property_sales": self.show_property_sales,
+            "liens_collection": self.show_liens_collection,
+            "payment_history": self.show_payment_history,
+            "notices": self.show_notices,
+            "assessments": self.show_assessments,
+            "cards_stickers": self.show_cards_stickers,
+            "financials": self.show_financials,
+            "reports": self.show_reports,
+            "utilities": self.show_utilities,
+        }
+        action = actions.get(destination)
+        if action is None:
+            self.logger.error("Unknown navigation destination: %s", destination)
+            messagebox.showerror("Screen unavailable", "That screen could not be opened.")
+            return
+        action()
 
     def show_import_setup(self) -> None:
         self._set_screen(
@@ -562,19 +618,36 @@ class LakeLotApp(tk.Tk):
             )
             bullet.grid(row=idx, column=0, sticky="ew", pady=(0, 4))
 
+        next_row = len(help_info.actions) + 2
+        if help_info.legacy_reference:
+            legacy = tk.Label(
+                body,
+                text=f"What this replaced in dBase\n{help_info.legacy_reference}",
+                background="#e7f1fb",
+                foreground="#183b62",
+                justify="left",
+                anchor="w",
+                wraplength=460,
+                padx=12,
+                pady=10,
+                font=("TkDefaultFont", 10),
+            )
+            legacy.grid(row=next_row, column=0, sticky="ew", pady=(10, 2))
+            next_row += 1
+
         dont_show_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             body,
             text="Don't show this again for this screen",
             variable=dont_show_var,
-        ).grid(row=len(help_info.actions) + 2, column=0, sticky="w", pady=(12, 10))
+        ).grid(row=next_row, column=0, sticky="w", pady=(12, 10))
 
         def close_dialog() -> None:
             if first_time or dont_show_var.get():
                 save_seen_screen_help(self.paths.update_config_path, help_key, True)
             dialog.destroy()
 
-        ttk.Button(body, text="Close", command=close_dialog).grid(row=len(help_info.actions) + 3, column=0, sticky="e")
+        ttk.Button(body, text="Close", command=close_dialog).grid(row=next_row + 1, column=0, sticky="e")
         self._center_dialog(dialog)
 
 

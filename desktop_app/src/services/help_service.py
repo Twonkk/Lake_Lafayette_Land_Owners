@@ -8,6 +8,7 @@ class ScreenHelp:
     title: str
     summary: str
     actions: tuple[str, ...]
+    legacy_reference: str | None = None
 
 
 SCREEN_HELP: dict[str, ScreenHelp] = {
@@ -18,6 +19,18 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
             "Review balances due, liens, freeze lots, and recent activity.",
             "Use the sidebar to jump into the task you need next.",
         ),
+        legacy_reference="This is a new summary screen. Select Classic Menu to use the original dBase ordering.",
+    ),
+    "classic_menu": ScreenHelp(
+        title="Classic Menu",
+        summary="Use the familiar dBase group and option numbers without typing commands.",
+        actions=(
+            "Choose Group 1 for owner, property, assessment, lien, card, and label work.",
+            "Choose Group 2 for transactions, budgets, month closing, and financial reports.",
+            "Choose Group 3 for record checks, dBase refresh, backups, and updates.",
+            "Select Simple Home at any time if you prefer the newer summary screen.",
+        ),
+        legacy_reference="This replaces the original dBase main MENU.PRG screen and preserves its 1, 2, and 3 group order.",
     ),
     "owners_lots": ScreenHelp(
         title="Owners and Lots",
@@ -28,6 +41,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
             "Save Lot Changes updates the selected lot detail fields.",
             "Save Note adds a new note to the selected owner record.",
         ),
+        legacy_reference="In dBase: Group 1, option 1 — Revise or Review Individual Owner Info or Lot Info.",
     ),
     "payments": ScreenHelp(
         title="Payments",
@@ -37,6 +51,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
             "Enter the payment amount and review the allocations.",
             "Post Payment saves the payment and creates a backup first.",
         ),
+        legacy_reference="In dBase: Group 1, option 2 — Record Payment of Assessments.",
     ),
     "property_sales": ScreenHelp(
         title="Property Sales",
@@ -47,6 +62,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
             "Record Sale / Purchase saves the transfer and opens the receipt PDF.",
             "Reverse Selected Sale undoes the highlighted recent sale group.",
         ),
+        legacy_reference="In dBase: Group 1, options 5 and 6 — Record or Reverse a Property Sale.",
     ),
     "liens_collection": ScreenHelp(
         title="Liens / Collection",
@@ -56,6 +72,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
             "File Lien or Remove Lien updates lien status and dates.",
             "Assign To Collection or Remove From Collection updates collection flags.",
         ),
+        legacy_reference="In dBase: Group 1, options 8 and 9 — Liens and Collection Agency.",
     ),
     "payment_history": ScreenHelp(
         title="Payment History",
@@ -64,6 +81,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
             "Search by owner, lot, date, or check/reference number.",
             "Select a payment to review the full detail and audit values.",
         ),
+        legacy_reference="In dBase: Group 1, option 10 — Display History Records.",
     ),
     "notices": ScreenHelp(
         title="Notices",
@@ -73,6 +91,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
             "Create Selected PDF prints one owner notice.",
             "Create Batch PDF creates separate notice PDFs for the current batch.",
         ),
+        legacy_reference="In dBase: Group 1, option 4 — Print Assessment Notices.",
     ),
     "assessments": ScreenHelp(
         title="Assessments",
@@ -81,6 +100,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
             "Preview Assessment Run shows what will change before you post it.",
             "Apply Assessment Update saves the run and creates a backup first.",
         ),
+        legacy_reference="In dBase: Group 1, option 3 — Update All Records for a New Assessment Due.",
     ),
     "cards_stickers": ScreenHelp(
         title="Boat / ID Cards",
@@ -90,6 +110,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
             "Record Boat Sticker Purchase saves the purchase and opens a receipt PDF.",
             "Issue ID Card saves the issue record and opens a receipt PDF.",
         ),
+        legacy_reference="In dBase: Group 1, options 11 and 12 — Boat Stickers and ID Cards.",
     ),
     "financials": ScreenHelp(
         title="Financials",
@@ -101,6 +122,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
             "Accounts / Budget handles account maintenance and budget edits.",
             "Monthly Report contains the financial PDF outputs.",
         ),
+        legacy_reference="In dBase: Group 2, options 1–10 — Financial Records.",
     ),
     "reports": ScreenHelp(
         title="Reports",
@@ -110,6 +132,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
             "Lot Report prints lot-level records.",
             "Mailing Labels prints mailing label output from owner addresses.",
         ),
+        legacy_reference="In dBase: Group 1, options 7 and 13 — Reports and Mailing Labels.",
     ),
     "utilities": ScreenHelp(
         title="Utilities",
@@ -119,6 +142,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
             "Refresh From dBase re-imports the legacy data while dBase is still the source of truth.",
             "Check for Updates looks for a newer Windows installer and can download it into the local updates folder.",
         ),
+        legacy_reference="In dBase: Group 3 — Reindex All Files and Run File Test. SQLite handles indexes automatically; use record checks here.",
     ),
     "initial_setup": ScreenHelp(
         title="Initial Setup",

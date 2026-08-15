@@ -50,7 +50,10 @@ to confirm the PDF runtime is available before testing notice/report printing.
 
 - creates a local SQLite database
 - imports owner, lot, notes, and payment history from the legacy DBF files
-- provides a first owner/lot search screen after import
+- provides a familiar Classic Menu with the original dBase group and option numbers
+- provides an optional Simple Home summary and remembers the employee's preferred home screen
+- connects every main Help panel to the dBase option it replaces
+- provides owner/lot search and the primary daily workflows after import
 
 Use the `Import Legacy Data` button in the app to load the current `../dbase` files.
 
