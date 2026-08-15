@@ -11,8 +11,9 @@ import sys
 
 APP_NAME = "Lake Lafayette Landowners Association"
 APP_SLUG = "LakeLotManager"
-APP_VERSION = "0.1.17"
+APP_VERSION = "0.1.18"
 DB_FILENAME = "lake_lot.sqlite3"
+NAVIGATION_MODES = ("classic", "simple")
 
 
 def _project_root() -> Path:
@@ -153,6 +154,21 @@ def save_seen_screen_help(config_path: Path, screen_key: str, seen: bool = True)
 def reset_seen_screen_help(config_path: Path) -> None:
     payload = load_update_config(config_path)
     payload["seen_screen_help"] = {}
+    save_update_config(config_path, payload)
+
+
+def load_navigation_mode(config_path: Path) -> str:
+    payload = load_update_config(config_path)
+    mode = str(payload.get("navigation_mode", "classic")).strip().lower()
+    return mode if mode in NAVIGATION_MODES else "classic"
+
+
+def save_navigation_mode(config_path: Path, mode: str) -> None:
+    normalized_mode = str(mode).strip().lower()
+    if normalized_mode not in NAVIGATION_MODES:
+        raise ValueError(f"Unknown navigation mode: {mode}")
+    payload = load_update_config(config_path)
+    payload["navigation_mode"] = normalized_mode
     save_update_config(config_path, payload)
 
 
