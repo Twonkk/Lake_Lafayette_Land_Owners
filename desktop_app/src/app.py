@@ -29,7 +29,7 @@ from src.services.logging_service import get_logger
 from src.services.update_service import check_for_updates, download_update_asset
 from src.ui.assessments import AssessmentsFrame
 from src.ui.cards_stickers import CardsStickersFrame
-from src.ui.classic_menu import ClassicMenuFrame
+from src.ui.classic_menu import ClassicMenuFrame, HOME_NAVIGATION_CHOICES
 from src.ui.dashboard import DashboardFrame
 from src.ui.financials import FinancialsFrame
 from src.ui.import_setup import ImportSetupFrame
@@ -166,19 +166,11 @@ class LakeLotApp(tk.Tk):
             buttons = [("Initial Setup", self.show_import_setup)]
         else:
             buttons = [
-                ("Classic Menu", lambda: self.choose_navigation_mode("classic")),
-                ("Simple Home", lambda: self.choose_navigation_mode("simple")),
-                ("Owners and Lots", self.show_owner_lot),
-                ("Payments", self.show_payments),
-                ("Property Sales", self.show_property_sales),
-                ("Liens / Collection", self.show_liens_collection),
-                ("Payment History", self.show_payment_history),
-                ("Notices", self.show_notices),
-                ("Assessments", self.show_assessments),
-                ("Boat / ID Cards", self.show_cards_stickers),
-                ("Financials", self.show_financials),
-                ("Reports", self.show_reports),
-                ("Utilities", self.show_utilities),
+                (
+                    label,
+                    lambda selected_mode=mode: self.choose_navigation_mode(selected_mode),
+                )
+                for label, mode in HOME_NAVIGATION_CHOICES
             ]
 
         for idx, (label, action) in enumerate(buttons, start=2):

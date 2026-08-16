@@ -17,7 +17,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
         summary="Use this screen to see what needs attention before starting daily work.",
         actions=(
             "Review balances due, liens, freeze lots, and recent activity.",
-            "Use the sidebar to jump into the task you need next.",
+            "Select Classic Menu in the sidebar to open a daily task.",
         ),
         legacy_reference="This is a new summary screen. Select Classic Menu to use the original dBase ordering.",
     ),

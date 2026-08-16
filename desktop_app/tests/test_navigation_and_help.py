@@ -5,7 +5,7 @@ import unittest
 
 from src.runtime import load_navigation_mode, save_navigation_mode
 from src.services.help_service import get_screen_help
-from src.ui.classic_menu import CLASSIC_MENU_GROUPS
+from src.ui.classic_menu import CLASSIC_MENU_GROUPS, HOME_NAVIGATION_CHOICES
 
 
 class NavigationPreferenceTests(unittest.TestCase):
@@ -38,6 +38,12 @@ class NavigationPreferenceTests(unittest.TestCase):
 
 
 class ClassicMenuMappingTests(unittest.TestCase):
+    def test_sidebar_only_contains_nonduplicated_home_choices(self) -> None:
+        self.assertEqual(
+            HOME_NAVIGATION_CHOICES,
+            (("Classic Menu", "classic"), ("Simple Home", "simple")),
+        )
+
     def test_legacy_group_and_option_order_is_preserved(self) -> None:
         self.assertEqual([group.number for group in CLASSIC_MENU_GROUPS], [1, 2, 3])
         self.assertEqual([len(group.items) for group in CLASSIC_MENU_GROUPS], [13, 10, 2])

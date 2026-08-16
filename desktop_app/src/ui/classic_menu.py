@@ -6,6 +6,12 @@ import tkinter as tk
 from tkinter import ttk
 
 
+HOME_NAVIGATION_CHOICES = (
+    ("Classic Menu", "classic"),
+    ("Simple Home", "simple"),
+)
+
+
 @dataclass(frozen=True, slots=True)
 class ClassicMenuItem:
     number: int
