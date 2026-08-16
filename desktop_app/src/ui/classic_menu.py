@@ -6,10 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 
 
-HOME_NAVIGATION_CHOICES = (
-    ("Classic Menu", "classic"),
-    ("Simple Home", "simple"),
-)
+MENU_SIDEBAR_LABEL = "Menu"
 
 
 @dataclass(frozen=True, slots=True)

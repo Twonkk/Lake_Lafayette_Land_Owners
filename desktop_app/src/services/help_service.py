@@ -12,23 +12,13 @@ class ScreenHelp:
 
 
 SCREEN_HELP: dict[str, ScreenHelp] = {
-    "dashboard": ScreenHelp(
-        title="Home",
-        summary="Use this screen to see what needs attention before starting daily work.",
-        actions=(
-            "Review balances due, liens, freeze lots, and recent activity.",
-            "Select Classic Menu in the sidebar to open a daily task.",
-        ),
-        legacy_reference="This is a new summary screen. Select Classic Menu to use the original dBase ordering.",
-    ),
-    "classic_menu": ScreenHelp(
-        title="Classic Menu",
+    "menu": ScreenHelp(
+        title="Menu",
         summary="Use the familiar dBase group and option numbers without typing commands.",
         actions=(
             "Choose Group 1 for owner, property, assessment, lien, card, and label work.",
             "Choose Group 2 for transactions, budgets, month closing, and financial reports.",
             "Choose Group 3 for record checks, dBase refresh, backups, and updates.",
-            "Select Simple Home at any time if you prefer the newer summary screen.",
         ),
         legacy_reference="This replaces the original dBase main MENU.PRG screen and preserves its 1, 2, and 3 group order.",
     ),

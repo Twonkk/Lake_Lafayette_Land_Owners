@@ -50,9 +50,8 @@ to confirm the PDF runtime is available before testing notice/report printing.
 
 - creates a local SQLite database
 - imports owner, lot, notes, and payment history from the legacy DBF files
-- provides a familiar Classic Menu with the original dBase group and option numbers
-- keeps the sidebar uncluttered with only Classic Menu and the optional Simple Home
-- remembers the employee's preferred home screen
+- provides a familiar Menu with the original dBase group and option numbers
+- keeps the sidebar uncluttered with one Menu button
 - connects every main Help panel to the dBase option it replaces
 - provides owner/lot search and the primary daily workflows after import
 
