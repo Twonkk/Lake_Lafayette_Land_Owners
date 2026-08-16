@@ -129,7 +129,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
         summary="Use this screen for data checks and controlled refresh from dBase.",
         actions=(
             "Run Data Health Checks reviews duplicates, mismatches, and missing links.",
-            "Refresh From dBase re-imports the legacy data while dBase is still the source of truth.",
+            "Browse and Refresh From dBase lets you choose and validate a newly copied dBase backup folder before importing it.",
             "Check for Updates looks for a newer Windows installer and can download it into the local updates folder.",
         ),
         legacy_reference="In dBase: Group 3 — Reindex All Files and Run File Test. SQLite handles indexes automatically; use record checks here.",

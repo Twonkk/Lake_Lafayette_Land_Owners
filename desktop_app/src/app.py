@@ -1,6 +1,6 @@
 from pathlib import Path
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from src.db.connection import initialize_database
 from src.db.repositories import OwnerRepository
@@ -353,16 +353,48 @@ class LakeLotApp(tk.Tk):
         self.show_menu()
 
     def refresh_from_legacy_data(self) -> None:
+        selected = filedialog.askdirectory(
+            title="Select the dBase backup folder",
+            initialdir=str(self.legacy_dir),
+        )
+        if not selected:
+            return
+
+        source_dir = Path(selected).resolve()
+        missing = validate_legacy_directory(source_dir)
+        if missing:
+            messagebox.showerror(
+                "Not a complete dBase folder",
+                "\n".join(
+                    [
+                        f"The selected folder cannot be refreshed:\n{source_dir}",
+                        "",
+                        "Missing required files:",
+                        *missing,
+                        "",
+                        "Choose the folder that directly contains the DBF files.",
+                    ]
+                ),
+            )
+            return
+
         confirm = messagebox.askyesno(
             "Refresh From dBase",
-            "This will re-import the current dBase data into the app database.\n\n"
-            "A full backup will be created first. Refresh will stop automatically if "
-            "activity has already been recorded in the new app.\n\n"
-            "Use this only while dBase is still the source of truth.",
+            "\n".join(
+                [
+                    "Refresh from this dBase folder?",
+                    str(source_dir),
+                    "",
+                    "A full backup will be created first. Refresh will stop automatically if "
+                    "activity has already been recorded in the new app.",
+                    "",
+                    "Use this only while dBase is still the source of truth.",
+                ]
+            ),
         )
         if not confirm:
             return
-        self.import_legacy_data(self.legacy_dir)
+        self.import_legacy_data(source_dir)
 
     def show_current_help(self) -> None:
         if self.current_help_key:

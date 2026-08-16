@@ -11,7 +11,7 @@ import sys
 
 APP_NAME = "Lake Lafayette Landowners Association"
 APP_SLUG = "LakeLotManager"
-APP_VERSION = "0.1.21"
+APP_VERSION = "0.1.22"
 DB_FILENAME = "lake_lot.sqlite3"
 
 

@@ -34,7 +34,7 @@ class UtilitiesFrame(ttk.Frame):
         ttk.Button(actions, text="Run Data Health Checks", command=self.run_checks).grid(
             row=0, column=0, sticky="w", padx=(0, 8)
         )
-        ttk.Button(actions, text="Refresh From dBase", command=self.refresh_callback).grid(
+        ttk.Button(actions, text="Browse and Refresh From dBase", command=self.refresh_callback).grid(
             row=0, column=1, sticky="w"
         )
         ttk.Button(actions, text="Reset Screen Tutorials", command=self.reset_tutorials).grid(
