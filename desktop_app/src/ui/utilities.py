@@ -41,13 +41,13 @@ class UtilitiesFrame(ttk.Frame):
             row=0, column=2, sticky="w", padx=(8, 0)
         )
         ttk.Button(actions, text="Check PDF Setup", command=self.check_pdf_setup).grid(
-            row=0, column=3, sticky="w", padx=(8, 0)
+            row=1, column=0, sticky="w", pady=(8, 0)
         )
         ttk.Button(actions, text="Open Log Folder", command=self.open_logs_callback).grid(
-            row=0, column=4, sticky="w", padx=(8, 0)
+            row=1, column=1, sticky="w", padx=(8, 0), pady=(8, 0)
         )
         ttk.Button(actions, text="Check for Updates", command=self.check_updates_callback).grid(
-            row=0, column=5, sticky="w", padx=(8, 0)
+            row=1, column=2, sticky="w", padx=(8, 0), pady=(8, 0)
         )
 
         self.output = tk.Text(

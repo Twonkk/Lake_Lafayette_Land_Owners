@@ -52,6 +52,7 @@ to confirm the PDF runtime is available before testing notice/report printing.
 - imports owner, lot, notes, and payment history from the legacy DBF files
 - provides a familiar Menu with the original dBase group and option numbers
 - keeps the sidebar uncluttered with one Menu button
+- uses larger controls, Windows DPI awareness, maximized startup, and a scrollable Menu for scaled displays
 - connects every main Help panel to the dBase option it replaces
 - provides owner/lot search and the primary daily workflows after import
 

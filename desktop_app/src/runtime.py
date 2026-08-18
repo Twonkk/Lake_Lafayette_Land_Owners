@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -11,8 +12,34 @@ import sys
 
 APP_NAME = "Lake Lafayette Landowners Association"
 APP_SLUG = "LakeLotManager"
-APP_VERSION = "0.1.22"
+APP_VERSION = "0.1.23"
 DB_FILENAME = "lake_lot.sqlite3"
+
+
+def configure_windows_dpi_awareness() -> str:
+    """Enable crisp, correctly sized Tk geometry on scaled Windows displays."""
+    if sys.platform != "win32":
+        return "not-windows"
+
+    try:
+        per_monitor_v2 = ctypes.c_void_p(-4)
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(per_monitor_v2):
+            return "per-monitor-v2"
+    except (AttributeError, OSError):
+        pass
+
+    try:
+        if ctypes.windll.shcore.SetProcessDpiAwareness(2) in {0, -2147024891}:
+            return "per-monitor"
+    except (AttributeError, OSError):
+        pass
+
+    try:
+        if ctypes.windll.user32.SetProcessDPIAware():
+            return "system"
+    except (AttributeError, OSError):
+        pass
+    return "unchanged"
 
 
 def _project_root() -> Path:

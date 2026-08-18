@@ -1,4 +1,5 @@
 from pathlib import Path
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -41,7 +42,13 @@ from src.ui.utilities import UtilitiesFrame
 
 
 APP_TITLE = APP_NAME
-APP_SIZE = "1280x800"
+
+
+def preferred_window_size(screen_width: int, screen_height: int) -> tuple[int, int]:
+    """Keep the initial window inside the display even under Windows scaling."""
+    width = min(1280, max(screen_width - 40, 1))
+    height = min(800, max(screen_height - 80, 1))
+    return width, height
 
 
 class LakeLotApp(tk.Tk):
@@ -49,8 +56,7 @@ class LakeLotApp(tk.Tk):
         super().__init__()
         self.logger = get_logger("app")
         self.title(APP_TITLE)
-        self.geometry(APP_SIZE)
-        self.minsize(1100, 700)
+        self._configure_window_geometry()
 
         self.paths = resolve_app_paths()
         ensure_runtime_dirs(self.paths)
@@ -74,8 +80,27 @@ class LakeLotApp(tk.Tk):
         self._build_shell()
         self.logger.info("Main window initialized")
 
+    def _configure_window_geometry(self) -> None:
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        width, height = preferred_window_size(screen_width, screen_height)
+        x = max((screen_width - width) // 2, 0)
+        y = max((screen_height - height) // 2, 0)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+        self.minsize(min(900, width), min(560, height))
+        if sys.platform == "win32":
+            try:
+                self.state("zoomed")
+            except tk.TclError:
+                pass
+
     def _configure_theme(self) -> None:
         self.style.theme_use("clam")
+        self.style.configure(
+            "TButton",
+            font=("TkDefaultFont", 11),
+            padding=(10, 6),
+        )
         self.style.configure("App.TFrame", background="#f3efe7")
         self.style.configure(
             "Sidebar.TFrame",
@@ -115,21 +140,24 @@ class LakeLotApp(tk.Tk):
             "Nav.TButton",
             background="#2f5d8c",
             foreground="#ffffff",
-            padding=(12, 8),
+            padding=(14, 10),
+            font=("TkDefaultFont", 12, "bold"),
         )
         self.style.configure(
             "Classic.TButton",
             background="#ffffff",
             foreground="#1d2430",
-            padding=(10, 4),
+            padding=(12, 7),
             anchor="w",
-            font=("TkDefaultFont", 10),
+            font=("TkDefaultFont", 12),
         )
         self.style.map(
             "Classic.TButton",
             background=[("active", "#dbeafe")],
             foreground=[("active", "#173b63")],
         )
+        self.style.configure("Treeview", font=("TkDefaultFont", 11), rowheight=29)
+        self.style.configure("Treeview.Heading", font=("TkDefaultFont", 11, "bold"))
 
     def _build_shell(self) -> None:
         self.columnconfigure(1, weight=1)

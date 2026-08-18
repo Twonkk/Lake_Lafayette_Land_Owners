@@ -75,12 +75,41 @@ class ClassicMenuFrame(ttk.Frame):
         super().__init__(parent, style="App.TFrame")
         self.navigate = navigate
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(1, weight=1)
-        self._build()
+        self.rowconfigure(0, weight=1)
 
-    def _build(self) -> None:
-        intro = tk.Label(
+        self.canvas = tk.Canvas(
             self,
+            background="#f3efe7",
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+
+        self.content = ttk.Frame(self.canvas, style="App.TFrame")
+        self.content.columnconfigure(0, weight=1)
+        self.content.rowconfigure(1, weight=1)
+        self.content_window = self.canvas.create_window(
+            (0, 0),
+            window=self.content,
+            anchor="nw",
+        )
+        self.content.bind("<Configure>", self._update_scroll_region)
+        self.canvas.bind("<Configure>", self._resize_content)
+        self.canvas.bind("<Enter>", lambda _event: self.canvas.focus_set())
+        self.canvas.bind("<MouseWheel>", self._scroll_with_wheel)
+        self.canvas.bind("<Button-4>", lambda _event: self.canvas.yview_scroll(-1, "units"))
+        self.canvas.bind("<Button-5>", lambda _event: self.canvas.yview_scroll(1, "units"))
+        self.canvas.bind("<Prior>", lambda _event: self.canvas.yview_scroll(-1, "pages"))
+        self.canvas.bind("<Next>", lambda _event: self.canvas.yview_scroll(1, "pages"))
+        self._build(self.content)
+        self._bind_scroll_controls(self.content)
+
+    def _build(self, parent: ttk.Frame) -> None:
+        self.intro = tk.Label(
+            parent,
             text=(
                 "The familiar dBase menu, now point-and-click. The original group and option "
                 "numbers are kept so you can use the same routine you already know."
@@ -92,27 +121,31 @@ class ClassicMenuFrame(ttk.Frame):
             wraplength=920,
             padx=14,
             pady=8,
-            font=("TkDefaultFont", 11),
+            font=("TkDefaultFont", 12),
         )
-        intro.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        self.intro.grid(row=0, column=0, sticky="ew", pady=(0, 10))
 
-        groups = ttk.Frame(self, style="App.TFrame")
+        groups = ttk.Frame(parent, style="App.TFrame")
         groups.grid(row=1, column=0, sticky="nsew")
-        groups.rowconfigure(0, weight=1)
-        for column in range(len(CLASSIC_MENU_GROUPS)):
-            groups.columnconfigure(column, weight=1, uniform="classic_groups")
+        groups.columnconfigure(0, weight=1, uniform="classic_groups")
+        groups.columnconfigure(1, weight=1, uniform="classic_groups")
 
-        for column, group in enumerate(CLASSIC_MENU_GROUPS):
+        placements = ((0, 0, 2), (0, 1, 1), (1, 1, 1))
+        for group, (row, column, rowspan) in zip(CLASSIC_MENU_GROUPS, placements):
             group_frame = ttk.LabelFrame(
                 groups,
                 text=f"Group {group.number} — {group.title}",
-                padding=8,
+                padding=10,
             )
+            padx = (0, 7) if column == 0 else (7, 0)
+            pady = (0, 0) if group.number == 1 else ((0, 7) if group.number == 2 else (7, 0))
             group_frame.grid(
-                row=0,
+                row=row,
                 column=column,
+                rowspan=rowspan,
                 sticky="nsew",
-                padx=(0, 10 if column < len(CLASSIC_MENU_GROUPS) - 1 else 0),
+                padx=padx,
+                pady=pady,
             )
             group_frame.columnconfigure(0, weight=1)
 
@@ -135,3 +168,35 @@ class ClassicMenuFrame(ttk.Frame):
                     justify="left",
                 )
                 reminder.grid(row=len(group.items), column=0, sticky="ew", pady=(10, 0))
+
+    def _update_scroll_region(self, _event: tk.Event | None = None) -> None:
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _bind_scroll_controls(self, widget: tk.Misc) -> None:
+        widget.bind("<MouseWheel>", self._scroll_with_wheel, add="+")
+        widget.bind(
+            "<Button-4>",
+            lambda _event: self.canvas.yview_scroll(-1, "units"),
+            add="+",
+        )
+        widget.bind(
+            "<Button-5>",
+            lambda _event: self.canvas.yview_scroll(1, "units"),
+            add="+",
+        )
+        for child in widget.winfo_children():
+            self._bind_scroll_controls(child)
+
+    def _resize_content(self, event: tk.Event) -> None:
+        self.intro.configure(wraplength=max(event.width - 28, 320))
+        requested_height = self.content.winfo_reqheight()
+        self.canvas.itemconfigure(
+            self.content_window,
+            width=event.width,
+            height=max(event.height, requested_height),
+        )
+
+    def _scroll_with_wheel(self, event: tk.Event) -> str:
+        direction = -1 if event.delta > 0 else 1
+        self.canvas.yview_scroll(direction * 3, "units")
+        return "break"
