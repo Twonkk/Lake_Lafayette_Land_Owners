@@ -110,6 +110,7 @@ class AssessmentsFrame(ttk.Frame):
                     "Legacy notes:",
                     "- Exempt owner codes are zeroed out if they carry a due balance.",
                     "- Frozen lots carry forward current assessment instead of rolling it into delinquent balance.",
+                    "- Frozen lots beginning with X receive neither the new assessment nor new interest.",
                     "- Owner totals are recalculated after all lot updates.",
                     "- A backup is created before the run is applied.",
                 ]

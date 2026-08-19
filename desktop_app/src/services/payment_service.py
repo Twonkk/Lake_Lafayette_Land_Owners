@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 import shutil
 
@@ -19,11 +21,39 @@ PAYMENT_FORM_CODES = {
     "Negotiated Adjustment": "NA",
 }
 
+PAYMENT_CATEGORY_FIELDS = (
+    "current_assessment",
+    "current_interest",
+    "delinquent_assessment",
+    "delinquent_interest",
+)
+PAYMENT_CATEGORY_LABELS = {
+    "current_assessment": "Current assessment",
+    "current_interest": "Current interest",
+    "delinquent_assessment": "Delinquent assessment",
+    "delinquent_interest": "Delinquent interest",
+}
+MONEY_QUANTUM = Decimal("0.01")
+
 
 @dataclass(slots=True)
 class LotAllocation:
     lot_number: str
-    payment_amount: float
+    current_assessment: float = 0.0
+    current_interest: float = 0.0
+    delinquent_assessment: float = 0.0
+    delinquent_interest: float = 0.0
+    paid_through: str = ""
+
+    @property
+    def payment_amount(self) -> float:
+        return _money(sum(self.category_amounts().values()))
+
+    def category_amounts(self) -> dict[str, float]:
+        return {
+            field: _money(getattr(self, field))
+            for field in PAYMENT_CATEGORY_FIELDS
+        }
 
 
 @dataclass(slots=True)
@@ -58,6 +88,10 @@ def _safe_float(value: object) -> float:
     return float(value)
 
 
+def _money(value: object) -> float:
+    return float(Decimal(str(value or 0)).quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP))
+
+
 def _make_backup(db_path: Path) -> Path:
     backup_dir = db_path.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -67,24 +101,30 @@ def _make_backup(db_path: Path) -> Path:
     return backup_path
 
 
-def _allocate_payment(lot: dict, amount: float) -> dict[str, float]:
-    remaining = amount
-    buckets = [
-        ("delinquent_interest", _safe_float(lot["delinquent_interest"])),
-        ("delinquent_assessment", _safe_float(lot["delinquent_assessment"])),
-        ("current_interest", _safe_float(lot["current_interest"])),
-        ("current_assessment", _safe_float(lot["current_assessment"])),
-    ]
-    applied: dict[str, float] = {name: 0.0 for name, _ in buckets}
+def validate_lot_allocation(
+    allocation: LotAllocation,
+    lot: Mapping[str, object],
+) -> dict[str, float]:
+    applied = allocation.category_amounts()
+    for field, amount in applied.items():
+        if amount < 0:
+            raise ValueError(f"{PAYMENT_CATEGORY_LABELS[field]} payment cannot be negative.")
+        balance = _money(lot[field])
+        if field != "delinquent_assessment" and amount > balance:
+            raise ValueError(
+                f"{PAYMENT_CATEGORY_LABELS[field]} payment cannot exceed the "
+                f"${balance:,.2f} balance for lot {allocation.lot_number}."
+            )
 
-    for name, balance in buckets:
-        if remaining <= 0:
-            break
-        take = min(balance, remaining)
-        applied[name] = round(take, 2)
-        remaining = round(remaining - take, 2)
-
-    applied["remaining"] = remaining
+    total = allocation.payment_amount
+    total_due = _money(lot["total_due"])
+    if total <= 0:
+        raise ValueError(f"Distribution for lot {allocation.lot_number} must be greater than zero.")
+    if total > total_due:
+        raise ValueError(
+            f"Distribution for lot {allocation.lot_number} cannot exceed its "
+            f"${total_due:,.2f} total balance."
+        )
     return applied
 
 
@@ -98,10 +138,10 @@ def post_lot_payment(db_path: Path, request: PaymentRequest) -> PaymentResult:
     if not request.allocations:
         raise ValueError("Allocate the payment to at least one lot.")
 
-    total_allocated = round(sum(item.payment_amount for item in request.allocations), 2)
+    total_allocated = _money(sum(item.payment_amount for item in request.allocations))
     if total_allocated <= 0:
         raise ValueError("Allocated payment total must be greater than zero.")
-    if round(request.payment_amount, 2) != total_allocated:
+    if _money(request.payment_amount) != total_allocated:
         raise ValueError("Payment amount must match the total allocated across lots.")
 
     backup_path = _make_backup(db_path)
@@ -118,8 +158,13 @@ def post_lot_payment(db_path: Path, request: PaymentRequest) -> PaymentResult:
         if owner is None:
             raise ValueError("Owner record not found.")
 
-        previous_owner_total = _safe_float(owner["total_owed"])
-        new_owner_total = round(previous_owner_total - request.payment_amount, 2)
+        previous_owner_total = _money(
+            connection.execute(
+                "SELECT COALESCE(SUM(total_due), 0) FROM lots WHERE owner_code = ?",
+                [request.owner_code],
+            ).fetchone()[0]
+        )
+        new_owner_total = _money(previous_owner_total - request.payment_amount)
         if new_owner_total < 0:
             raise ValueError("Payment amount cannot exceed the owner's total owed.")
 
@@ -139,7 +184,8 @@ def post_lot_payment(db_path: Path, request: PaymentRequest) -> PaymentResult:
                     delinquent_assessment,
                     delinquent_interest,
                     current_assessment,
-                    current_interest
+                    current_interest,
+                    paid_through
                 FROM lots
                 WHERE lot_number = ?
                 """,
@@ -153,27 +199,20 @@ def post_lot_payment(db_path: Path, request: PaymentRequest) -> PaymentResult:
             previous_total_due = _safe_float(lot["total_due"])
             if previous_total_due <= 0:
                 raise ValueError(f"Lot {allocation.lot_number} does not currently have a balance due.")
-            if allocation.payment_amount <= 0:
-                raise ValueError(f"Allocation for lot {allocation.lot_number} must be greater than zero.")
-            if allocation.payment_amount > previous_total_due:
-                raise ValueError(
-                    f"Allocation for lot {allocation.lot_number} cannot exceed ${previous_total_due:,.2f}."
-                )
-
-            applied = _allocate_payment(dict(lot), allocation.payment_amount)
-            new_delinquent_interest = round(
-                _safe_float(lot["delinquent_interest"]) - applied["delinquent_interest"], 2
+            applied = validate_lot_allocation(allocation, dict(lot))
+            new_delinquent_interest = _money(
+                _safe_float(lot["delinquent_interest"]) - applied["delinquent_interest"]
             )
-            new_delinquent_assessment = round(
-                _safe_float(lot["delinquent_assessment"]) - applied["delinquent_assessment"], 2
+            new_delinquent_assessment = _money(
+                _safe_float(lot["delinquent_assessment"]) - applied["delinquent_assessment"]
             )
-            new_current_interest = round(
-                _safe_float(lot["current_interest"]) - applied["current_interest"], 2
+            new_current_interest = _money(
+                _safe_float(lot["current_interest"]) - applied["current_interest"]
             )
-            new_current_assessment = round(
-                _safe_float(lot["current_assessment"]) - applied["current_assessment"], 2
+            new_current_assessment = _money(
+                _safe_float(lot["current_assessment"]) - applied["current_assessment"]
             )
-            new_total_due = round(previous_total_due - allocation.payment_amount, 2)
+            new_total_due = _money(previous_total_due - allocation.payment_amount)
 
             connection.execute(
                 """
@@ -186,6 +225,7 @@ def post_lot_payment(db_path: Path, request: PaymentRequest) -> PaymentResult:
                     total_due = ?,
                     payment_amount = ?,
                     pay_date = ?,
+                    paid_through = ?,
                     payment_form = ?
                 WHERE lot_number = ?
                 """,
@@ -197,6 +237,7 @@ def post_lot_payment(db_path: Path, request: PaymentRequest) -> PaymentResult:
                     new_total_due,
                     allocation.payment_amount,
                     request.payment_date,
+                    allocation.paid_through.strip().upper() or lot["paid_through"],
                     form_code,
                     allocation.lot_number,
                 ],
@@ -210,6 +251,7 @@ def post_lot_payment(db_path: Path, request: PaymentRequest) -> PaymentResult:
                     payment_date,
                     payment_form,
                     check_number,
+                    paid_through,
                     number_lots,
                     delinquent_assessment_1,
                     delinquent_interest_1,
@@ -222,7 +264,7 @@ def post_lot_payment(db_path: Path, request: PaymentRequest) -> PaymentResult:
                     total_posted,
                     posted_flag,
                     payment_method
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     allocation.lot_number,
@@ -231,6 +273,7 @@ def post_lot_payment(db_path: Path, request: PaymentRequest) -> PaymentResult:
                     request.payment_date,
                     form_code,
                     request.check_number.strip() or None,
+                    allocation.paid_through.strip().upper() or lot["paid_through"],
                     len(request.allocations),
                     applied["delinquent_assessment"],
                     applied["delinquent_interest"],
@@ -256,12 +299,17 @@ def post_lot_payment(db_path: Path, request: PaymentRequest) -> PaymentResult:
                     payment_form,
                     check_number,
                     note_text,
+                    paid_through,
+                    paid_current_assessment,
+                    paid_current_interest,
+                    paid_delinquent_assessment,
+                    paid_delinquent_interest,
                     backup_path,
                     previous_total_due,
                     new_total_due,
                     previous_owner_total,
                     new_owner_total
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     timestamp,
@@ -272,6 +320,11 @@ def post_lot_payment(db_path: Path, request: PaymentRequest) -> PaymentResult:
                     form_code,
                     request.check_number.strip() or None,
                     request.note_text.strip() or None,
+                    allocation.paid_through.strip().upper() or lot["paid_through"],
+                    applied["current_assessment"],
+                    applied["current_interest"],
+                    applied["delinquent_assessment"],
+                    applied["delinquent_interest"],
                     str(backup_path),
                     previous_total_due,
                     new_total_due,
@@ -339,3 +392,17 @@ def post_lot_payment(db_path: Path, request: PaymentRequest) -> PaymentResult:
 
 def default_payment_date() -> str:
     return date.today().isoformat()
+
+
+def default_paid_through(db_path: Path) -> str:
+    with get_connection(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT paid_through
+            FROM legacy_system_history
+            WHERE TRIM(COALESCE(paid_through, '')) <> ''
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    return str(row["paid_through"] or "") if row is not None else ""

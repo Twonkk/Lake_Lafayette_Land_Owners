@@ -35,10 +35,11 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
     ),
     "payments": ScreenHelp(
         title="Payments",
-        summary="Use this screen to post assessment payments for one owner.",
+        summary="Use this screen to post assessment payments using the four familiar dBase categories.",
         actions=(
-            "Select the owner, then check one or more lots.",
-            "Enter the payment amount and review the allocations.",
+            "Select the owner and lot, then choose Distribute Selected Lot Payment.",
+            "Enter current assessment, current interest, delinquent assessment, and delinquent interest amounts.",
+            "For a full payment, enter Paid through and choose Fill Full Owner Balance.",
             "Post Payment saves the payment and creates a backup first.",
         ),
         legacy_reference="In dBase: Group 1, option 2 — Record Payment of Assessments.",

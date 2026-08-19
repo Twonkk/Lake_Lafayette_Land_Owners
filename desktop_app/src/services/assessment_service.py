@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 import shutil
 
@@ -10,6 +11,7 @@ from src.db.connection import get_connection
 
 EXEMPT_OWNER_CODES = {"2489", "2642", "2959"}
 INTEREST_RATE = 0.035
+MONEY_QUANTUM = Decimal("0.01")
 
 
 @dataclass(slots=True)
@@ -41,6 +43,10 @@ def _safe_float(value: object) -> float:
     return float(value)
 
 
+def _money(value: object) -> float:
+    return float(Decimal(str(value or 0)).quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP))
+
+
 def _make_backup(db_path: Path) -> Path:
     backup_dir = db_path.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -51,6 +57,7 @@ def _make_backup(db_path: Path) -> Path:
 
 
 def preview_assessment_run(db_path: Path, assessment_amount: float) -> AssessmentPreview:
+    assessment_amount = _money(assessment_amount)
     if assessment_amount <= 0:
         raise ValueError("Assessment amount must be greater than zero.")
 
@@ -77,7 +84,10 @@ def preview_assessment_run(db_path: Path, assessment_amount: float) -> Assessmen
         eligible_lots += 1
         if row["freeze_flag"] == "Y":
             freeze_lots += 1
-            projected_current += _safe_float(row["current_assessment"])
+            if not str(row["lot_number"] or "").upper().startswith("X"):
+                projected_current += _money(
+                    _safe_float(row["current_assessment"]) + assessment_amount
+                )
         else:
             projected_current += assessment_amount
 
@@ -87,11 +97,12 @@ def preview_assessment_run(db_path: Path, assessment_amount: float) -> Assessmen
         exempt_lots=exempt_lots,
         freeze_lots=freeze_lots,
         owner_count=len(owner_codes),
-        projected_current_assessment=round(projected_current, 2),
+        projected_current_assessment=_money(projected_current),
     )
 
 
 def apply_assessment_run(db_path: Path, assessment_amount: float, assessment_date: str) -> AssessmentResult:
+    assessment_amount = _money(assessment_amount)
     preview = preview_assessment_run(db_path, assessment_amount)
     backup_path = _make_backup(db_path)
     created_at = datetime.now().isoformat(timespec="seconds")
@@ -137,23 +148,36 @@ def apply_assessment_run(db_path: Path, assessment_amount: float, assessment_dat
                     lots_updated += 1
                 continue
 
-            delinquent_interest = round(
-                _safe_float(row["delinquent_interest"]) + _safe_float(row["current_interest"]), 2
+            delinquent_interest = _money(
+                _safe_float(row["delinquent_interest"]) + _safe_float(row["current_interest"])
             )
             if row["freeze_flag"] == "Y":
                 current_interest = 0.0
-                current_assessment = _safe_float(row["current_assessment"]) + assessment_amount
-                delinquent_assessment = _safe_float(row["delinquent_assessment"])
+                if str(row["lot_number"] or "").upper().startswith("X"):
+                    current_assessment = 0.0
+                else:
+                    current_assessment = _money(
+                        _safe_float(row["current_assessment"]) + assessment_amount
+                    )
+                delinquent_assessment = _money(row["delinquent_assessment"])
             else:
-                delinquent_assessment = round(
-                    _safe_float(row["delinquent_assessment"]) + _safe_float(row["current_assessment"]),
-                    2,
+                delinquent_assessment = _money(
+                    _safe_float(row["delinquent_assessment"]) + _safe_float(row["current_assessment"])
                 )
-                total_delinquent = round(delinquent_assessment + delinquent_interest, 2)
-                current_interest = round(INTEREST_RATE * total_delinquent, 2) if total_delinquent > 0 else 0.0
-                current_assessment = round(assessment_amount, 2)
+                total_delinquent = _money(delinquent_assessment + delinquent_interest)
+                current_interest = (
+                    _money(Decimal(str(total_delinquent)) * Decimal(str(INTEREST_RATE)))
+                    if total_delinquent > 0
+                    else 0.0
+                )
+                current_assessment = assessment_amount
 
-            total_due = round(delinquent_assessment + delinquent_interest + current_interest + current_assessment, 2)
+            total_due = _money(
+                delinquent_assessment
+                + delinquent_interest
+                + current_interest
+                + current_assessment
+            )
             lot_updates.append(
                 (
                     delinquent_assessment,

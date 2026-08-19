@@ -5,10 +5,14 @@ from tkinter import messagebox, ttk
 from src.db.repositories import OwnerRepository
 from src.services.payment_service import (
     LotAllocation,
+    PAYMENT_CATEGORY_FIELDS,
+    PAYMENT_CATEGORY_LABELS,
     PAYMENT_FORM_CODES,
     PaymentRequest,
+    default_paid_through,
     default_payment_date,
     post_lot_payment,
+    validate_lot_allocation,
 )
 
 
@@ -24,31 +28,60 @@ class PaymentsFrame(ttk.Frame):
         self.form_var = tk.StringVar(value="Check")
         self.check_var = tk.StringVar()
         self.note_var = tk.StringVar()
-        self.manual_allocation_var = tk.StringVar()
+        self.full_paid_through_var = tk.StringVar(value=default_paid_through(db_path))
         self.selected_owner_code: str | None = None
         self.selected_lot_number: str | None = None
-        self.allocation_editor: ttk.Entry | None = None
-        self.editing_lot_number: str | None = None
-        self.allocations: dict[str, float] = {}
+        self.allocations: dict[str, LotAllocation] = {}
         self.lot_balances: dict[str, float] = {}
+        self.lot_category_balances: dict[str, dict[str, float]] = {}
+        self.lot_paid_through: dict[str, str] = {}
         self.selected_lots: set[str] = set()
-        self.amount_var.trace_add("write", self._on_amount_change)
 
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(0, weight=1)
 
-        self._build()
+        self.canvas = tk.Canvas(
+            self,
+            background="#f3efe7",
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+
+        self.content = ttk.Frame(self.canvas, style="App.TFrame")
+        self.content.columnconfigure(0, weight=1)
+        self.content_window = self.canvas.create_window(
+            (0, 0),
+            window=self.content,
+            anchor="nw",
+        )
+        self.content.bind("<Configure>", self._update_scroll_region)
+        self.canvas.bind("<Configure>", self._resize_content)
+        self.canvas.bind("<MouseWheel>", self._scroll_with_wheel)
+        self.canvas.bind("<Prior>", lambda _event: self.canvas.yview_scroll(-1, "pages"))
+        self.canvas.bind("<Next>", lambda _event: self.canvas.yview_scroll(1, "pages"))
+
+        self._build(self.content)
+        self._bind_scroll_controls(self.content)
         self.run_search()
 
-    def _build(self) -> None:
-        intro = ttk.Label(
-            self,
-            text="Search for an owner, select one or more lots, allocate the payment, then post it. "
-            "A database backup is created before each payment is saved.",
+    def _build(self, parent: ttk.Frame) -> None:
+        self.intro = ttk.Label(
+            parent,
+            text=(
+                "Search for an owner, then distribute the payment among the same four balance "
+                "categories used in dBase. A database backup is created before it is saved. "
+                "On smaller screens, use the far-right scrollbar to reach Post Payment."
+            ),
+            wraplength=920,
+            justify="left",
         )
-        intro.grid(row=0, column=0, sticky="w", pady=(0, 10))
+        self.intro.grid(row=0, column=0, sticky="ew", pady=(0, 10))
 
-        search_row = ttk.Frame(self, style="App.TFrame")
+        search_row = ttk.Frame(parent, style="App.TFrame")
         search_row.grid(row=1, column=0, sticky="ew", pady=(0, 12))
         search_row.columnconfigure(1, weight=1)
         ttk.Label(search_row, text="Search owner").grid(row=0, column=0, sticky="w", padx=(0, 8))
@@ -61,9 +94,9 @@ class PaymentsFrame(ttk.Frame):
             text="Only owners with balance due",
             variable=self.only_due_var,
             command=self.run_search,
-        ).grid(row=0, column=3, sticky="w", padx=(12, 0))
+        ).grid(row=1, column=1, columnspan=2, sticky="w", pady=(8, 0))
 
-        split = ttk.Panedwindow(self, orient="horizontal")
+        split = ttk.Panedwindow(parent, orient="horizontal")
         split.grid(row=2, column=0, sticky="nsew")
 
         left = ttk.Frame(split, style="App.TFrame", padding=(0, 0, 12, 0))
@@ -74,7 +107,7 @@ class PaymentsFrame(ttk.Frame):
         left.columnconfigure(0, weight=1)
         left.rowconfigure(1, weight=1)
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(3, weight=1)
+        right.rowconfigure(2, weight=1)
 
         ttk.Label(left, text="Owners", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
         self.owner_tree = ttk.Treeview(
@@ -88,7 +121,12 @@ class PaymentsFrame(ttk.Frame):
         self.owner_tree.grid(row=1, column=0, sticky="nsew")
         owner_scroll = ttk.Scrollbar(left, orient="vertical", command=self.owner_tree.yview)
         owner_scroll.grid(row=1, column=1, sticky="ns")
-        self.owner_tree.configure(yscrollcommand=owner_scroll.set)
+        owner_xscroll = ttk.Scrollbar(left, orient="horizontal", command=self.owner_tree.xview)
+        owner_xscroll.grid(row=2, column=0, sticky="ew")
+        self.owner_tree.configure(
+            yscrollcommand=owner_scroll.set,
+            xscrollcommand=owner_xscroll.set,
+        )
         self.owner_tree.bind("<<TreeviewSelect>>", self._on_owner_select)
 
         ttk.Label(right, text="Payment entry", style="Section.TLabel").grid(
@@ -135,40 +173,41 @@ class PaymentsFrame(ttk.Frame):
         self.lot_tree.grid(row=0, column=0, sticky="nsew")
         self.lot_tree.bind("<<TreeviewSelect>>", self._on_lot_select)
         self.lot_tree.bind("<Button-1>", self._handle_lot_click)
-        self.lot_tree.bind("<Configure>", self._cancel_allocation_edit)
+        self.lot_tree.bind("<Double-1>", self._open_distribution_from_double_click)
         lot_scroll = ttk.Scrollbar(lot_box, orient="vertical", command=self.lot_tree.yview)
         lot_scroll.grid(row=0, column=1, sticky="ns")
-        self.lot_tree.configure(yscrollcommand=lot_scroll.set)
+        lot_xscroll = ttk.Scrollbar(lot_box, orient="horizontal", command=self.lot_tree.xview)
+        lot_xscroll.grid(row=1, column=0, sticky="ew")
+        self.lot_tree.configure(
+            yscrollcommand=lot_scroll.set,
+            xscrollcommand=lot_xscroll.set,
+        )
 
         lot_actions = ttk.Frame(right, style="App.TFrame")
         lot_actions.grid(row=3, column=0, sticky="ew", pady=(0, 12))
-        lot_actions.columnconfigure(5, weight=1)
-        ttk.Label(lot_actions, text="Allocation for selected lot").grid(
-            row=0, column=0, sticky="w", padx=(0, 8)
-        )
-        ttk.Entry(lot_actions, textvariable=self.manual_allocation_var, width=12).grid(
-            row=0, column=1, sticky="w", padx=(0, 8)
-        )
-        ttk.Button(lot_actions, text="Set Allocation", command=self.set_manual_allocation).grid(
-            row=0, column=2, sticky="w", padx=(0, 8)
-        )
-        ttk.Button(lot_actions, text="Auto Fill Selected", command=self.auto_allocate_selected).grid(
-            row=0, column=3, sticky="w", padx=(0, 8)
-        )
+        ttk.Button(
+            lot_actions,
+            text="Distribute Selected Lot Payment",
+            command=self.open_category_distribution,
+        ).grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Button(
+            lot_actions,
+            text="Fill Selected Lot Balance",
+            command=self.fill_selected_lot_balance,
+        ).grid(row=0, column=1, sticky="w", padx=(0, 8))
+        ttk.Button(
+            lot_actions,
+            text="Fill Full Owner Balance",
+            command=self.fill_full_owner_balance,
+        ).grid(row=1, column=0, sticky="w", pady=(8, 0), padx=(0, 8))
         ttk.Button(lot_actions, text="Check / Uncheck Lot", command=self.toggle_current_lot).grid(
-            row=0, column=4, sticky="w"
+            row=1, column=1, sticky="w", pady=(8, 0)
         )
-        ttk.Button(lot_actions, text="Select All Lots", command=self.select_all_lots).grid(
-            row=1, column=0, sticky="w", pady=(8, 0), padx=(0, 8)
+        ttk.Button(lot_actions, text="Clear Selected Lots", command=self.clear_selected_lots).grid(
+            row=2, column=0, sticky="w", pady=(8, 0), padx=(0, 8)
         )
-        ttk.Button(lot_actions, text="Select Lots With Balance", command=self.select_due_lots).grid(
-            row=1, column=1, sticky="w", pady=(8, 0), padx=(0, 8)
-        )
-        ttk.Button(lot_actions, text="Clear Selected", command=self.clear_selected_lots).grid(
-            row=1, column=2, sticky="w", pady=(8, 0), padx=(0, 8)
-        )
-        ttk.Button(lot_actions, text="Clear Allocations", command=self.clear_allocations).grid(
-            row=1, column=3, sticky="w", pady=(8, 0)
+        ttk.Button(lot_actions, text="Clear Distributions", command=self.clear_allocations).grid(
+            row=2, column=1, sticky="w", pady=(8, 0)
         )
 
         form = ttk.LabelFrame(right, text="Post payment")
@@ -180,6 +219,7 @@ class PaymentsFrame(ttk.Frame):
             ("Selected lots", "selected_lot_value"),
             ("Payment amount", "amount"),
             ("Allocated total", "allocated_total_value"),
+            ("Paid through (full payment)", "full_paid_through"),
             ("Payment date", "date"),
             ("Payment form", "form"),
             ("Check / ref", "check"),
@@ -193,6 +233,8 @@ class PaymentsFrame(ttk.Frame):
             ttk.Label(form, text=label).grid(row=idx, column=0, sticky="w", padx=(12, 8), pady=6)
             if key == "amount":
                 widget = ttk.Entry(form, textvariable=self.amount_var)
+            elif key == "full_paid_through":
+                widget = ttk.Entry(form, textvariable=self.full_paid_through_var)
             elif key == "date":
                 widget = ttk.Entry(form, textvariable=self.date_var)
             elif key == "form":
@@ -219,6 +261,39 @@ class PaymentsFrame(ttk.Frame):
         ttk.Button(form, text="Post Payment", command=self.post_payment).grid(
             row=len(fields), column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 12)
         )
+
+    def _update_scroll_region(self, _event: tk.Event | None = None) -> None:
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _resize_content(self, event: tk.Event) -> None:
+        self.intro.configure(wraplength=max(event.width - 24, 320))
+        self.canvas.itemconfigure(
+            self.content_window,
+            width=event.width,
+            height=max(event.height, self.content.winfo_reqheight()),
+        )
+
+    def _bind_scroll_controls(self, widget: tk.Misc) -> None:
+        if isinstance(widget, (ttk.Treeview, tk.Text)):
+            return
+        widget.bind("<MouseWheel>", self._scroll_with_wheel, add="+")
+        widget.bind(
+            "<Button-4>",
+            lambda _event: self.canvas.yview_scroll(-1, "units"),
+            add="+",
+        )
+        widget.bind(
+            "<Button-5>",
+            lambda _event: self.canvas.yview_scroll(1, "units"),
+            add="+",
+        )
+        for child in widget.winfo_children():
+            self._bind_scroll_controls(child)
+
+    def _scroll_with_wheel(self, event: tk.Event) -> str:
+        direction = -1 if event.delta > 0 else 1
+        self.canvas.yview_scroll(direction * 3, "units")
+        return "break"
 
     def run_search(self, _event: object | None = None) -> None:
         results = self.repository.search(self.search_var.get())
@@ -252,6 +327,8 @@ class PaymentsFrame(ttk.Frame):
         self.selected_lot_number = None
         self.allocations = {}
         self.lot_balances = {}
+        self.lot_category_balances = {}
+        self.lot_paid_through = {}
         self.selected_lots = set()
         self.selected_owner_value.set(owner_code)
         self.selected_lot_value.set("")
@@ -259,7 +336,6 @@ class PaymentsFrame(ttk.Frame):
         self.amount_var.set("")
         self.check_var.set("")
         self.note_var.set("")
-        self.manual_allocation_var.set("")
 
         summary = "\n".join(
             [
@@ -276,14 +352,19 @@ class PaymentsFrame(ttk.Frame):
         self.owner_summary.configure(state="disabled")
 
         self.lot_tree.delete(*self.lot_tree.get_children())
-        self._cancel_allocation_edit()
         for lot in detail["lots"]:
             due = float(lot["total_due"] or 0)
-            self.lot_balances[lot["lot_number"]] = due
+            lot_number = lot["lot_number"]
+            self.lot_balances[lot_number] = due
+            self.lot_category_balances[lot_number] = {
+                field: float(lot[field] or 0)
+                for field in PAYMENT_CATEGORY_FIELDS
+            }
+            self.lot_paid_through[lot_number] = str(lot["paid_through"] or "")
             self.lot_tree.insert(
                 "",
                 "end",
-                iid=lot["lot_number"],
+                iid=lot_number,
                 values=(
                     "[ ]",
                     lot["lot_number"],
@@ -305,85 +386,41 @@ class PaymentsFrame(ttk.Frame):
     def _handle_lot_click(self, event: tk.Event) -> str | None:
         row_id = self.lot_tree.identify_row(event.y)
         column_id = self.lot_tree.identify_column(event.x)
-        if self.allocation_editor is not None and not (
-            row_id == self.editing_lot_number and column_id == "#4"
-        ):
-            self._commit_allocation_edit()
         if row_id and column_id == "#1":
             self.lot_tree.selection_set(row_id)
             self.toggle_lot(row_id)
             return "break"
-        if row_id and column_id == "#4":
-            self.lot_tree.selection_set(row_id)
-            self._begin_allocation_edit(row_id)
-            return "break"
-        self._cancel_allocation_edit()
         return None
 
-    def _begin_allocation_edit(self, lot_number: str) -> None:
-        bbox = self.lot_tree.bbox(lot_number, "#4")
-        if not bbox:
+    def _open_distribution_from_double_click(self, event: tk.Event) -> None:
+        row_id = self.lot_tree.identify_row(event.y)
+        if not row_id:
             return
-        self._cancel_allocation_edit()
-        self.editing_lot_number = lot_number
-        current_value = self.allocations.get(lot_number, 0.0)
-        editor = ttk.Entry(self.lot_tree)
-        editor.insert(0, f"{current_value:.2f}" if current_value else "")
-        editor.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
-        editor.focus_set()
-        editor.select_range(0, "end")
-        editor.bind("<Return>", self._commit_allocation_edit)
-        editor.bind("<FocusOut>", self._commit_allocation_edit)
-        editor.bind("<Escape>", self._cancel_allocation_edit)
-        self.allocation_editor = editor
-
-    def _cancel_allocation_edit(self, _event: object | None = None) -> None:
-        if self.allocation_editor is not None:
-            self.allocation_editor.destroy()
-        self.allocation_editor = None
-        self.editing_lot_number = None
-
-    def _commit_allocation_edit(self, _event: object | None = None) -> None:
-        if self.allocation_editor is None or self.editing_lot_number is None:
-            return
-        lot_number = self.editing_lot_number
-        raw_value = self.allocation_editor.get().strip()
-        self._cancel_allocation_edit()
-        if not raw_value:
-            self._set_lot_allocation(lot_number, 0.0)
-            return
-        try:
-            amount = float(raw_value)
-        except ValueError:
-            messagebox.showerror("Invalid amount", "Enter a valid allocation amount.")
-            return
-        self._set_lot_allocation(lot_number, amount)
+        self.lot_tree.selection_set(row_id)
+        self._update_selected_lots()
+        self.open_category_distribution()
 
     def _update_selected_lots(self) -> None:
         current = list(self.lot_tree.selection())
         self.selected_lot_number = current[0] if current else None
         if not current:
             self.selected_lot_value.set("")
-            self.manual_allocation_var.set("")
             return
         if len(self.selected_lots) == 1:
             lot_number = next(iter(self.selected_lots))
             self.selected_lot_value.set(lot_number)
-            self.manual_allocation_var.set(
-                f"{self.allocations.get(lot_number, 0.0):.2f}" if lot_number in self.allocations else ""
-            )
             return
         if self.selected_lots:
             self.selected_lot_value.set(f"{len(self.selected_lots)} lots selected")
         else:
             self.selected_lot_value.set(current[0])
-        self.manual_allocation_var.set("")
 
     def _refresh_lot_allocations(self) -> None:
         total = 0.0
         for lot_number in self.lot_tree.get_children():
             values = list(self.lot_tree.item(lot_number, "values"))
-            amount = round(self.allocations.get(lot_number, 0.0), 2)
+            allocation = self.allocations.get(lot_number)
+            amount = allocation.payment_amount if allocation is not None else 0.0
             total += amount
             values[0] = "[x]" if lot_number in self.selected_lots else "[ ]"
             values[3] = f"${amount:,.2f}"
@@ -391,29 +428,180 @@ class PaymentsFrame(ttk.Frame):
         self.allocated_total_value.set(f"${total:,.2f}")
         self._update_selected_lots()
 
-    def _on_amount_change(self, *_args: object) -> None:
-        if self.allocation_editor is not None:
+    def _lot_record_for_validation(self, lot_number: str) -> dict[str, float]:
+        return {
+            **self.lot_category_balances[lot_number],
+            "total_due": self.lot_balances[lot_number],
+        }
+
+    def open_category_distribution(self) -> None:
+        lot_number = self.selected_lot_number
+        if not lot_number:
+            messagebox.showerror("Select one lot", "Select a lot before distributing the payment.")
             return
-        if not self.selected_lots:
-            return
-        raw_amount = self.amount_var.get().strip()
-        if not raw_amount:
-            self.allocations = {
-                lot: amount for lot, amount in self.allocations.items() if lot not in self.selected_lots
-            }
+
+        existing = self.allocations.get(lot_number)
+        amount_vars = {
+            field: tk.StringVar(
+                value=(
+                    f"{getattr(existing, field):.2f}"
+                    if existing is not None and getattr(existing, field)
+                    else ""
+                )
+            )
+            for field in PAYMENT_CATEGORY_FIELDS
+        }
+        paid_through_var = tk.StringVar(
+            value=(
+                existing.paid_through
+                if existing is not None
+                else self.lot_paid_through.get(lot_number, "")
+            )
+        )
+
+        dialog = tk.Toplevel(self)
+        dialog.title(f"Distribute Payment — Lot {lot_number}")
+        dialog.transient(self.winfo_toplevel())
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        content = ttk.Frame(dialog, padding=18)
+        content.grid(row=0, column=0, sticky="nsew")
+        content.columnconfigure(2, weight=1)
+        ttk.Label(
+            content,
+            text=(
+                "Enter the payment in the same four categories used by dBase. "
+                "Leave an unused category blank or enter 0."
+            ),
+            wraplength=560,
+            justify="left",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 14))
+        ttk.Label(content, text="Category", style="Section.TLabel").grid(row=1, column=0, sticky="w")
+        ttk.Label(content, text="Amount owed", style="Section.TLabel").grid(
+            row=1, column=1, sticky="e", padx=(18, 18)
+        )
+        ttk.Label(content, text="Payment amount", style="Section.TLabel").grid(
+            row=1, column=2, sticky="w"
+        )
+
+        for row_number, field in enumerate(PAYMENT_CATEGORY_FIELDS, start=2):
+            ttk.Label(content, text=PAYMENT_CATEGORY_LABELS[field]).grid(
+                row=row_number, column=0, sticky="w", pady=6
+            )
+            ttk.Label(
+                content,
+                text=f"${self.lot_category_balances[lot_number][field]:,.2f}",
+            ).grid(row=row_number, column=1, sticky="e", padx=(18, 18), pady=6)
+            ttk.Entry(content, textvariable=amount_vars[field], width=16).grid(
+                row=row_number, column=2, sticky="ew", pady=6
+            )
+
+        paid_row = 2 + len(PAYMENT_CATEGORY_FIELDS)
+        ttk.Label(content, text="Paid through").grid(row=paid_row, column=0, sticky="w", pady=(10, 6))
+        ttk.Entry(content, textvariable=paid_through_var, width=16).grid(
+            row=paid_row, column=2, sticky="ew", pady=(10, 6)
+        )
+        ttk.Label(
+            content,
+            text=(
+                "dBase rule: delinquent assessment is the only category allowed to exceed "
+                "its displayed category balance. The total cannot exceed the lot balance."
+            ),
+            wraplength=560,
+            justify="left",
+        ).grid(row=paid_row + 1, column=0, columnspan=3, sticky="w", pady=(8, 14))
+
+        def save_distribution() -> None:
+            values: dict[str, float] = {}
+            for field, variable in amount_vars.items():
+                raw_value = variable.get().strip()
+                try:
+                    values[field] = float(raw_value) if raw_value else 0.0
+                except ValueError:
+                    messagebox.showerror(
+                        "Invalid amount",
+                        f"Enter a valid amount for {PAYMENT_CATEGORY_LABELS[field].lower()}.",
+                        parent=dialog,
+                    )
+                    return
+            allocation = LotAllocation(
+                lot_number=lot_number,
+                paid_through=paid_through_var.get().strip(),
+                **values,
+            )
+            try:
+                validate_lot_allocation(
+                    allocation,
+                    self._lot_record_for_validation(lot_number),
+                )
+            except ValueError as exc:
+                messagebox.showerror("Invalid distribution", str(exc), parent=dialog)
+                return
+            self.allocations[lot_number] = allocation
+            self.selected_lots.add(lot_number)
             self._refresh_lot_allocations()
+            if not self.amount_var.get().strip():
+                self.amount_var.set(f"{self._allocated_total():.2f}")
+            dialog.destroy()
+
+        buttons = ttk.Frame(content)
+        buttons.grid(row=paid_row + 2, column=0, columnspan=3, sticky="ew")
+        ttk.Button(buttons, text="Save Distribution", command=save_distribution).grid(
+            row=0, column=0, padx=(0, 8)
+        )
+        ttk.Button(buttons, text="Cancel", command=dialog.destroy).grid(row=0, column=1)
+        dialog.bind("<Escape>", lambda _event: dialog.destroy())
+        dialog.wait_visibility()
+        dialog.focus_set()
+
+    def _allocated_total(self) -> float:
+        return round(sum(item.payment_amount for item in self.allocations.values()), 2)
+
+    def _full_balance_allocation(self, lot_number: str, paid_through: str) -> LotAllocation:
+        balances = self.lot_category_balances[lot_number]
+        return LotAllocation(
+            lot_number=lot_number,
+            paid_through=paid_through,
+            **balances,
+        )
+
+    def fill_selected_lot_balance(self) -> None:
+        lot_number = self.selected_lot_number
+        if not lot_number:
+            messagebox.showerror("Select one lot", "Select a lot before filling its balance.")
             return
-        try:
-            payment_amount = float(raw_amount)
-        except ValueError:
+        if self.lot_balances.get(lot_number, 0) <= 0:
+            messagebox.showerror("No balance due", f"Lot {lot_number} does not have a balance due.")
             return
-        if payment_amount < 0:
+        paid_through = (
+            self.full_paid_through_var.get().strip()
+            or self.lot_paid_through.get(lot_number, "")
+        )
+        self.allocations[lot_number] = self._full_balance_allocation(lot_number, paid_through)
+        self.selected_lots.add(lot_number)
+        self.amount_var.set(f"{self._allocated_total():.2f}")
+        self._refresh_lot_allocations()
+
+    def fill_full_owner_balance(self) -> None:
+        paid_through = self.full_paid_through_var.get().strip()
+        if not paid_through:
+            messagebox.showerror(
+                "Paid through is required",
+                "Enter the paid-through period in the Post payment section before filling the full owner balance.",
+            )
             return
-        self._auto_allocate_selected_without_prompt(payment_amount)
+        self.allocations = {
+            lot_number: self._full_balance_allocation(lot_number, paid_through)
+            for lot_number, total_due in self.lot_balances.items()
+            if total_due > 0
+        }
+        self.selected_lots = set(self.allocations)
+        self.amount_var.set(f"{self._allocated_total():.2f}")
+        self._refresh_lot_allocations()
 
     def clear_allocations(self) -> None:
         self.allocations = {}
-        self.manual_allocation_var.set("")
         self._refresh_lot_allocations()
 
     def toggle_current_lot(self) -> None:
@@ -446,88 +634,7 @@ class PaymentsFrame(ttk.Frame):
     def clear_selected_lots(self) -> None:
         self.selected_lots = set()
         self.allocations = {}
-        self._cancel_allocation_edit()
         self._refresh_lot_allocations()
-
-    def _set_lot_allocation(self, lot_number: str, amount: float) -> None:
-        due = self.lot_balances.get(lot_number, 0.0)
-        if amount < 0:
-            messagebox.showerror("Invalid amount", "Allocation cannot be negative.")
-            return
-        if amount > due:
-            messagebox.showerror(
-                "Invalid amount",
-                f"Allocation cannot exceed the lot balance of ${due:,.2f}.",
-            )
-            return
-        if amount == 0:
-            self.allocations.pop(lot_number, None)
-            if lot_number in self.selected_lots:
-                self.selected_lots.remove(lot_number)
-        else:
-            self.selected_lots.add(lot_number)
-            self.allocations[lot_number] = round(amount, 2)
-        if self.selected_lot_number == lot_number:
-            self.manual_allocation_var.set(f"{amount:.2f}" if amount else "")
-        self._refresh_lot_allocations()
-
-    def set_manual_allocation(self) -> None:
-        if self.selected_lot_number is None:
-            messagebox.showerror("Select one lot", "Select one lot to set a manual allocation.")
-            return
-        try:
-            amount = float(self.manual_allocation_var.get())
-        except ValueError:
-            messagebox.showerror("Invalid amount", "Enter a valid allocation amount.")
-            return
-        self._set_lot_allocation(self.selected_lot_number, amount)
-
-    def auto_allocate_selected(self) -> None:
-        selected = sorted(self.selected_lots)
-        if not selected:
-            messagebox.showerror("No lots selected", "Select one or more lots to auto-fill.")
-            return
-        try:
-            payment_amount = float(self.amount_var.get())
-        except ValueError:
-            messagebox.showerror("Invalid amount", "Enter a valid payment amount first.")
-            return
-        if payment_amount <= 0:
-            messagebox.showerror("Invalid amount", "Payment amount must be greater than zero.")
-            return
-
-        remaining = round(payment_amount, 2)
-        self.allocations = {
-            lot: amount for lot, amount in self.allocations.items() if lot not in selected
-        }
-        for lot_number in selected:
-            if remaining <= 0:
-                break
-            due = self.lot_balances.get(lot_number, 0.0)
-            allocation = round(min(due, remaining), 2)
-            if allocation > 0:
-                self.allocations[lot_number] = allocation
-                remaining = round(remaining - allocation, 2)
-        self._refresh_lot_allocations()
-
-    def _auto_allocate_selected_without_prompt(self, payment_amount: float) -> float:
-        selected = sorted(self.selected_lots)
-        if not selected or payment_amount <= 0:
-            return 0.0
-        remaining = round(payment_amount, 2)
-        self.allocations = {
-            lot: amount for lot, amount in self.allocations.items() if lot not in selected
-        }
-        for lot_number in selected:
-            if remaining <= 0:
-                break
-            due = self.lot_balances.get(lot_number, 0.0)
-            allocation = round(min(due, remaining), 2)
-            if allocation > 0:
-                self.allocations[lot_number] = allocation
-                remaining = round(remaining - allocation, 2)
-        self._refresh_lot_allocations()
-        return round(sum(self.allocations.get(lot, 0.0) for lot in selected), 2)
 
     def post_payment(self) -> None:
         if not self.selected_owner_code:
@@ -541,40 +648,21 @@ class PaymentsFrame(ttk.Frame):
             return
 
         allocations = [
-            LotAllocation(lot_number=lot_number, payment_amount=allocated)
-            for lot_number, allocated in self.allocations.items()
-            if allocated > 0 and lot_number in self.selected_lots
+            allocation
+            for lot_number, allocation in self.allocations.items()
+            if allocation.payment_amount > 0 and lot_number in self.selected_lots
         ]
         allocated_total = round(sum(item.payment_amount for item in allocations), 2)
-        if not allocations and self.selected_lots:
-            auto_total = self._auto_allocate_selected_without_prompt(amount)
-            allocations = [
-                LotAllocation(lot_number=lot_number, payment_amount=allocated)
-                for lot_number, allocated in self.allocations.items()
-                if allocated > 0 and lot_number in self.selected_lots
-            ]
-            allocated_total = round(sum(item.payment_amount for item in allocations), 2)
-            if auto_total != round(amount, 2):
-                messagebox.showerror(
-                    "Allocation mismatch",
-                    "The selected lots do not match the payment amount. Adjust the checked lots or use manual allocation.",
-                )
-                return
-        if not allocations and self.selected_lot_number:
-            due = self.lot_balances.get(self.selected_lot_number, 0.0)
-            if amount <= due:
-                allocations = [LotAllocation(self.selected_lot_number, round(amount, 2))]
-                self.selected_lots.add(self.selected_lot_number)
-                self.allocations[self.selected_lot_number] = round(amount, 2)
-                self._refresh_lot_allocations()
-                allocated_total = round(amount, 2)
         if not allocations:
-            messagebox.showerror("Missing allocation", "Allocate the payment to at least one lot.")
+            messagebox.showerror(
+                "Missing distribution",
+                "Choose Distribute Selected Lot Payment and enter the payment in the dBase categories.",
+            )
             return
         if allocated_total != round(amount, 2):
             messagebox.showerror(
-                "Allocation mismatch",
-                "Payment amount must match the total allocated across selected lots.",
+                "Distribution mismatch",
+                "Payment amount must match the category distributions across all selected lots.",
             )
             return
 
@@ -595,6 +683,15 @@ class PaymentsFrame(ttk.Frame):
                     f"Owner: {request.owner_code}",
                     f"Amount: ${request.payment_amount:,.2f}",
                     f"Allocated to: {len(request.allocations)} lot(s)",
+                    *[
+                        f"- {allocation.lot_number}: ${allocation.payment_amount:,.2f}"
+                        + (
+                            f" (paid through {allocation.paid_through})"
+                            if allocation.paid_through
+                            else ""
+                        )
+                        for allocation in request.allocations
+                    ],
                     f"Date: {request.payment_date}",
                     f"Form: {request.payment_form}",
                     "",

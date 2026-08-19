@@ -10,6 +10,7 @@ This folder contains the new single-user desktop application that will replace t
 - safe writes with backups
 - minimal setup on Windows 11
 - plain-language dBase refresh protection that explains what was protected and what to do next
+- dBase-compatible assessment roll-forward and operator-controlled payment category distribution
 
 ## Run
 
