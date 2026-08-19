@@ -19,8 +19,11 @@ from src.runtime import (
 )
 from src.services.help_service import get_screen_help
 from src.services.import_service import (
+    NativeActivityError,
     backfill_financial_import_if_empty,
     database_has_core_data,
+    ensure_legacy_refresh_is_safe,
+    native_activity_display_lines,
     run_legacy_import,
     validate_legacy_directory,
 )
@@ -338,6 +341,10 @@ class LakeLotApp(tk.Tk):
 
         try:
             result = run_legacy_import(source_dir, self.db_path)
+        except NativeActivityError as exc:
+            self.logger.warning("Legacy import safely blocked: %s", exc.activity)
+            self._show_refresh_safety_warning(exc.activity)
+            return
         except Exception as exc:
             self.logger.exception("Legacy import failed from %s", source_dir)
             messagebox.showerror("Import failed", str(exc))
@@ -381,6 +388,13 @@ class LakeLotApp(tk.Tk):
         self.show_menu()
 
     def refresh_from_legacy_data(self) -> None:
+        try:
+            ensure_legacy_refresh_is_safe(self.db_path)
+        except NativeActivityError as exc:
+            self.logger.info("dBase folder selection blocked to protect app activity: %s", exc.activity)
+            self._show_refresh_safety_warning(exc.activity)
+            return
+
         selected = filedialog.askdirectory(
             title="Select the dBase backup folder",
             initialdir=str(self.legacy_dir),
@@ -423,6 +437,32 @@ class LakeLotApp(tk.Tk):
         if not confirm:
             return
         self.import_legacy_data(source_dir)
+
+    def _show_refresh_safety_warning(self, activity: dict[str, int]) -> None:
+        protected_records = [
+            f"- {line}" for line in native_activity_display_lines(activity)
+        ]
+        messagebox.showwarning(
+            "Refresh safely stopped",
+            "\n".join(
+                [
+                    "Nothing was changed.",
+                    "",
+                    "This app already contains work entered after the dBase data was imported. "
+                    "Refreshing from dBase could erase that newer work, so the app stopped.",
+                    "",
+                    "Protected work found:",
+                    *protected_records,
+                    "",
+                    "What should I do?",
+                    "- If you clicked Refresh by mistake, choose OK and continue using the app.",
+                    "- If a newer dBase backup must be imported, stop and contact the app "
+                    "administrator. The records must be reviewed and merged safely.",
+                    "",
+                    "Do not delete the app database or reinstall the program.",
+                ]
+            ),
+        )
 
     def show_current_help(self) -> None:
         if self.current_help_key:

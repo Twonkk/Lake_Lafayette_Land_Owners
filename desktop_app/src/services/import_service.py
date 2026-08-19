@@ -39,6 +39,23 @@ REQUIRED_LEGACY_FILES = [
     "PERMFILE.DBF",
 ]
 
+NATIVE_ACTIVITY_LABELS = {
+    "payment_audit": "Assessment payment entries",
+    "assessment_runs": "Assessment updates",
+    "property_sales": "Property sales or reversals",
+    "boat_sticker_purchases": "Boat sticker purchases",
+    "id_card_issues": "ID cards issued",
+    "financial_transactions": "Financial transactions",
+}
+
+
+class NativeActivityError(RuntimeError):
+    """Raised when a dBase refresh could erase work entered in this app."""
+
+    def __init__(self, activity: dict[str, int]) -> None:
+        self.activity = activity
+        super().__init__("Refresh safely stopped to protect work entered in this app.")
+
 
 def native_activity_counts(sqlite_path: Path) -> dict[str, int]:
     """Return app-native activity that a destructive dBase refresh would replace."""
@@ -60,6 +77,28 @@ def native_activity_counts(sqlite_path: Path) -> dict[str, int]:
             ).fetchone()[0]
         )
         return counts
+
+
+def active_native_activity(sqlite_path: Path) -> dict[str, int]:
+    return {
+        name: count
+        for name, count in native_activity_counts(sqlite_path).items()
+        if count
+    }
+
+
+def native_activity_display_lines(activity: dict[str, int]) -> list[str]:
+    return [
+        f"{NATIVE_ACTIVITY_LABELS.get(name, 'Other app activity')}: {count}"
+        for name, count in activity.items()
+        if count
+    ]
+
+
+def ensure_legacy_refresh_is_safe(sqlite_path: Path) -> None:
+    activity = active_native_activity(sqlite_path)
+    if activity:
+        raise NativeActivityError(activity)
 
 
 def _backup_before_import(sqlite_path: Path) -> Path | None:
@@ -95,14 +134,8 @@ def run_legacy_import(
     *,
     allow_native_activity: bool = False,
 ) -> ImportResult:
-    activity = native_activity_counts(sqlite_path)
-    active = {name: count for name, count in activity.items() if count}
-    if active and not allow_native_activity:
-        summary = ", ".join(f"{name}={count}" for name, count in active.items())
-        raise RuntimeError(
-            "Refresh stopped because this database contains activity recorded in the new app "
-            f"({summary}). Restore/merge must be reviewed before replacing it from dBase."
-        )
+    if not allow_native_activity:
+        ensure_legacy_refresh_is_safe(sqlite_path)
     backup_path = _backup_before_import(sqlite_path)
     result = import_legacy_directory(source_dir=source_dir, sqlite_path=sqlite_path)
     return ImportResult(

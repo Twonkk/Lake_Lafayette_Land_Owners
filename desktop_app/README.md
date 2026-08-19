@@ -9,6 +9,7 @@ This folder contains the new single-user desktop application that will replace t
 - obvious navigation
 - safe writes with backups
 - minimal setup on Windows 11
+- plain-language dBase refresh protection that explains what was protected and what to do next
 
 ## Run
 
