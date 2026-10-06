@@ -1,6 +1,7 @@
 from pathlib import Path
+import sys
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from src.db.connection import initialize_database
 from src.db.repositories import OwnerRepository
@@ -10,18 +11,19 @@ from src.runtime import (
     bootstrap_existing_local_database,
     ensure_runtime_dirs,
     has_seen_screen_help,
-    load_navigation_mode,
     reset_seen_screen_help,
     resolve_app_paths,
     save_seen_screen_help,
     save_legacy_dir,
-    save_navigation_mode,
     open_with_default_app,
 )
 from src.services.help_service import get_screen_help
 from src.services.import_service import (
+    NativeActivityError,
     backfill_financial_import_if_empty,
     database_has_core_data,
+    ensure_legacy_refresh_is_safe,
+    native_activity_display_lines,
     run_legacy_import,
     validate_legacy_directory,
 )
@@ -29,8 +31,7 @@ from src.services.logging_service import get_logger
 from src.services.update_service import check_for_updates, download_update_asset
 from src.ui.assessments import AssessmentsFrame
 from src.ui.cards_stickers import CardsStickersFrame
-from src.ui.classic_menu import ClassicMenuFrame
-from src.ui.dashboard import DashboardFrame
+from src.ui.classic_menu import ClassicMenuFrame, MENU_SIDEBAR_LABEL
 from src.ui.financials import FinancialsFrame
 from src.ui.import_setup import ImportSetupFrame
 from src.ui.lien_collection import LienCollectionFrame
@@ -44,7 +45,13 @@ from src.ui.utilities import UtilitiesFrame
 
 
 APP_TITLE = APP_NAME
-APP_SIZE = "1280x800"
+
+
+def preferred_window_size(screen_width: int, screen_height: int) -> tuple[int, int]:
+    """Keep the initial window inside the display even under Windows scaling."""
+    width = min(1280, max(screen_width - 40, 1))
+    height = min(800, max(screen_height - 80, 1))
+    return width, height
 
 
 class LakeLotApp(tk.Tk):
@@ -52,8 +59,7 @@ class LakeLotApp(tk.Tk):
         super().__init__()
         self.logger = get_logger("app")
         self.title(APP_TITLE)
-        self.geometry(APP_SIZE)
-        self.minsize(1100, 700)
+        self._configure_window_geometry()
 
         self.paths = resolve_app_paths()
         ensure_runtime_dirs(self.paths)
@@ -68,9 +74,8 @@ class LakeLotApp(tk.Tk):
         self.owner_repository = OwnerRepository(self.db_path)
         self.screen_container: ttk.Frame | None = None
         self.sidebar: ttk.Frame | None = None
-        self.screen_title_var = tk.StringVar(value="Modern desktop replacement")
+        self.screen_title_var = tk.StringVar(value="Menu")
         self.current_help_key: str | None = None
-        self.navigation_mode = load_navigation_mode(self.paths.update_config_path)
 
         self.configure(background="#f3efe7")
         self.style = ttk.Style(self)
@@ -78,8 +83,27 @@ class LakeLotApp(tk.Tk):
         self._build_shell()
         self.logger.info("Main window initialized")
 
+    def _configure_window_geometry(self) -> None:
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        width, height = preferred_window_size(screen_width, screen_height)
+        x = max((screen_width - width) // 2, 0)
+        y = max((screen_height - height) // 2, 0)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+        self.minsize(min(900, width), min(560, height))
+        if sys.platform == "win32":
+            try:
+                self.state("zoomed")
+            except tk.TclError:
+                pass
+
     def _configure_theme(self) -> None:
         self.style.theme_use("clam")
+        self.style.configure(
+            "TButton",
+            font=("TkDefaultFont", 11),
+            padding=(10, 6),
+        )
         self.style.configure("App.TFrame", background="#f3efe7")
         self.style.configure(
             "Sidebar.TFrame",
@@ -119,21 +143,24 @@ class LakeLotApp(tk.Tk):
             "Nav.TButton",
             background="#2f5d8c",
             foreground="#ffffff",
-            padding=(12, 8),
+            padding=(14, 10),
+            font=("TkDefaultFont", 12, "bold"),
         )
         self.style.configure(
             "Classic.TButton",
             background="#ffffff",
             foreground="#1d2430",
-            padding=(10, 4),
+            padding=(12, 7),
             anchor="w",
-            font=("TkDefaultFont", 10),
+            font=("TkDefaultFont", 12),
         )
         self.style.map(
             "Classic.TButton",
             background=[("active", "#dbeafe")],
             foreground=[("active", "#173b63")],
         )
+        self.style.configure("Treeview", font=("TkDefaultFont", 11), rowheight=29)
+        self.style.configure("Treeview.Heading", font=("TkDefaultFont", 11, "bold"))
 
     def _build_shell(self) -> None:
         self.columnconfigure(1, weight=1)
@@ -165,21 +192,7 @@ class LakeLotApp(tk.Tk):
         if self.initial_setup_required:
             buttons = [("Initial Setup", self.show_import_setup)]
         else:
-            buttons = [
-                ("Classic Menu", lambda: self.choose_navigation_mode("classic")),
-                ("Simple Home", lambda: self.choose_navigation_mode("simple")),
-                ("Owners and Lots", self.show_owner_lot),
-                ("Payments", self.show_payments),
-                ("Property Sales", self.show_property_sales),
-                ("Liens / Collection", self.show_liens_collection),
-                ("Payment History", self.show_payment_history),
-                ("Notices", self.show_notices),
-                ("Assessments", self.show_assessments),
-                ("Boat / ID Cards", self.show_cards_stickers),
-                ("Financials", self.show_financials),
-                ("Reports", self.show_reports),
-                ("Utilities", self.show_utilities),
-            ]
+            buttons = [(MENU_SIDEBAR_LABEL, self.show_menu)]
 
         for idx, (label, action) in enumerate(buttons, start=2):
             ttk.Button(sidebar, text=label, style="Nav.TButton", command=action).grid(
@@ -210,10 +223,8 @@ class LakeLotApp(tk.Tk):
 
         if self.initial_setup_required:
             self.show_import_setup()
-        elif self.navigation_mode == "classic":
-            self.show_classic_menu()
         else:
-            self.show_dashboard()
+            self.show_menu()
 
     def _set_screen(self, title: str, frame_factory, help_key: str | None = None) -> None:
         self.screen_title_var.set(title)
@@ -228,23 +239,12 @@ class LakeLotApp(tk.Tk):
         if help_key and not has_seen_screen_help(self.paths.update_config_path, help_key):
             self.after(150, lambda: self.show_help(help_key, first_time=True))
 
-    def show_dashboard(self) -> None:
-        self._set_screen("Simple Home", lambda parent: DashboardFrame(parent, self.db_path), help_key="dashboard")
-
-    def show_classic_menu(self) -> None:
+    def show_menu(self) -> None:
         self._set_screen(
-            "Classic Menu",
+            "Menu",
             lambda parent: ClassicMenuFrame(parent, self.navigate_to),
-            help_key="classic_menu",
+            help_key="menu",
         )
-
-    def choose_navigation_mode(self, mode: str) -> None:
-        self.navigation_mode = mode
-        save_navigation_mode(self.paths.update_config_path, mode)
-        if mode == "classic":
-            self.show_classic_menu()
-        else:
-            self.show_dashboard()
 
     def navigate_to(self, destination: str) -> None:
         actions = {
@@ -322,12 +322,6 @@ class LakeLotApp(tk.Tk):
             help_key="utilities",
         )
 
-    def show_placeholder(self) -> None:
-        self._set_screen(
-            "Coming next",
-            lambda parent: DashboardFrame(parent),
-        )
-
     def import_legacy_data(self, source_dir: Path | None = None) -> None:
         source_dir = (source_dir or self.legacy_dir).resolve()
         missing = validate_legacy_directory(source_dir)
@@ -347,6 +341,10 @@ class LakeLotApp(tk.Tk):
 
         try:
             result = run_legacy_import(source_dir, self.db_path)
+        except NativeActivityError as exc:
+            self.logger.warning("Legacy import safely blocked: %s", exc.activity)
+            self._show_refresh_safety_warning(exc.activity)
+            return
         except Exception as exc:
             self.logger.exception("Legacy import failed from %s", source_dir)
             messagebox.showerror("Import failed", str(exc))
@@ -387,19 +385,84 @@ class LakeLotApp(tk.Tk):
                 ]
             ),
         )
-        self.show_dashboard()
+        self.show_menu()
 
     def refresh_from_legacy_data(self) -> None:
+        try:
+            ensure_legacy_refresh_is_safe(self.db_path)
+        except NativeActivityError as exc:
+            self.logger.info("dBase folder selection blocked to protect app activity: %s", exc.activity)
+            self._show_refresh_safety_warning(exc.activity)
+            return
+
+        selected = filedialog.askdirectory(
+            title="Select the dBase backup folder",
+            initialdir=str(self.legacy_dir),
+        )
+        if not selected:
+            return
+
+        source_dir = Path(selected).resolve()
+        missing = validate_legacy_directory(source_dir)
+        if missing:
+            messagebox.showerror(
+                "Not a complete dBase folder",
+                "\n".join(
+                    [
+                        f"The selected folder cannot be refreshed:\n{source_dir}",
+                        "",
+                        "Missing required files:",
+                        *missing,
+                        "",
+                        "Choose the folder that directly contains the DBF files.",
+                    ]
+                ),
+            )
+            return
+
         confirm = messagebox.askyesno(
             "Refresh From dBase",
-            "This will re-import the current dBase data into the app database.\n\n"
-            "A full backup will be created first. Refresh will stop automatically if "
-            "activity has already been recorded in the new app.\n\n"
-            "Use this only while dBase is still the source of truth.",
+            "\n".join(
+                [
+                    "Refresh from this dBase folder?",
+                    str(source_dir),
+                    "",
+                    "A full backup will be created first. Refresh will stop automatically if "
+                    "activity has already been recorded in the new app.",
+                    "",
+                    "Use this only while dBase is still the source of truth.",
+                ]
+            ),
         )
         if not confirm:
             return
-        self.import_legacy_data(self.legacy_dir)
+        self.import_legacy_data(source_dir)
+
+    def _show_refresh_safety_warning(self, activity: dict[str, int]) -> None:
+        protected_records = [
+            f"- {line}" for line in native_activity_display_lines(activity)
+        ]
+        messagebox.showwarning(
+            "Refresh safely stopped",
+            "\n".join(
+                [
+                    "Nothing was changed.",
+                    "",
+                    "This app already contains work entered after the dBase data was imported. "
+                    "Refreshing from dBase could erase that newer work, so the app stopped.",
+                    "",
+                    "Protected work found:",
+                    *protected_records,
+                    "",
+                    "What should I do?",
+                    "- If you clicked Refresh by mistake, choose OK and continue using the app.",
+                    "- If a newer dBase backup must be imported, stop and contact the app "
+                    "administrator. The records must be reviewed and merged safely.",
+                    "",
+                    "Do not delete the app database or reinstall the program.",
+                ]
+            ),
+        )
 
     def show_current_help(self) -> None:
         if self.current_help_key:

@@ -7,6 +7,16 @@ from src.db.schema import SCHEMA_STATEMENTS
 
 
 REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
+    "lot_payments": {
+        "paid_through": "TEXT",
+    },
+    "payment_audit": {
+        "paid_through": "TEXT",
+        "paid_current_assessment": "NUMERIC DEFAULT 0",
+        "paid_current_interest": "NUMERIC DEFAULT 0",
+        "paid_delinquent_assessment": "NUMERIC DEFAULT 0",
+        "paid_delinquent_interest": "NUMERIC DEFAULT 0",
+    },
     "financial_transactions": {
         "fiscal_year": "TEXT",
         "month_number": "INTEGER",

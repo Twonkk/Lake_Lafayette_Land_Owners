@@ -12,23 +12,13 @@ class ScreenHelp:
 
 
 SCREEN_HELP: dict[str, ScreenHelp] = {
-    "dashboard": ScreenHelp(
-        title="Home",
-        summary="Use this screen to see what needs attention before starting daily work.",
-        actions=(
-            "Review balances due, liens, freeze lots, and recent activity.",
-            "Use the sidebar to jump into the task you need next.",
-        ),
-        legacy_reference="This is a new summary screen. Select Classic Menu to use the original dBase ordering.",
-    ),
-    "classic_menu": ScreenHelp(
-        title="Classic Menu",
+    "menu": ScreenHelp(
+        title="Menu",
         summary="Use the familiar dBase group and option numbers without typing commands.",
         actions=(
             "Choose Group 1 for owner, property, assessment, lien, card, and label work.",
             "Choose Group 2 for transactions, budgets, month closing, and financial reports.",
             "Choose Group 3 for record checks, dBase refresh, backups, and updates.",
-            "Select Simple Home at any time if you prefer the newer summary screen.",
         ),
         legacy_reference="This replaces the original dBase main MENU.PRG screen and preserves its 1, 2, and 3 group order.",
     ),
@@ -45,10 +35,11 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
     ),
     "payments": ScreenHelp(
         title="Payments",
-        summary="Use this screen to post assessment payments for one owner.",
+        summary="Use this screen to post assessment payments using the four familiar dBase categories.",
         actions=(
-            "Select the owner, then check one or more lots.",
-            "Enter the payment amount and review the allocations.",
+            "Select the owner and lot, then choose Distribute Selected Lot Payment.",
+            "Enter current assessment, current interest, delinquent assessment, and delinquent interest amounts.",
+            "For a full payment, enter Paid through and choose Fill Full Owner Balance.",
             "Post Payment saves the payment and creates a backup first.",
         ),
         legacy_reference="In dBase: Group 1, option 2 — Record Payment of Assessments.",
@@ -89,7 +80,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
         actions=(
             "Choose individual, all-owner, or lien-only notice mode.",
             "Create Selected PDF prints one owner notice.",
-            "Create Batch PDF creates separate notice PDFs for the current batch.",
+            "Open Batch PDFs creates multi-page PDFs for every eligible owner, split by the batch size.",
         ),
         legacy_reference="In dBase: Group 1, option 4 — Print Assessment Notices.",
     ),
@@ -139,7 +130,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
         summary="Use this screen for data checks and controlled refresh from dBase.",
         actions=(
             "Run Data Health Checks reviews duplicates, mismatches, and missing links.",
-            "Refresh From dBase re-imports the legacy data while dBase is still the source of truth.",
+            "Browse and Refresh From dBase lets you choose and validate a newly copied dBase backup folder before importing it.",
             "Check for Updates looks for a newer Windows installer and can download it into the local updates folder.",
         ),
         legacy_reference="In dBase: Group 3 — Reindex All Files and Run File Test. SQLite handles indexes automatically; use record checks here.",

@@ -7,7 +7,11 @@ from unittest.mock import patch
 
 from src.db.connection import initialize_database
 from src.services.financial_service import FinancialTransactionRequest, post_financial_transaction
-from src.services.import_service import run_legacy_import
+from src.services.import_service import (
+    NativeActivityError,
+    native_activity_display_lines,
+    run_legacy_import,
+)
 from src.services.migration_service import reconcile_migration
 
 
@@ -70,9 +74,13 @@ class RefreshSafetyTests(DatabaseTestCase):
                 """
             )
         with patch("src.services.import_service.import_legacy_directory") as importer:
-            with self.assertRaisesRegex(RuntimeError, "Refresh stopped"):
+            with self.assertRaises(NativeActivityError) as raised:
                 run_legacy_import(Path(self.temp.name), self.db_path)
             importer.assert_not_called()
+        self.assertEqual(raised.exception.activity, {"assessment_runs": 1})
+        display = "\n".join(native_activity_display_lines(raised.exception.activity))
+        self.assertEqual(display, "Assessment updates: 1")
+        self.assertNotIn("assessment_runs", str(raised.exception))
 
 
 class ReconciliationTests(DatabaseTestCase):

@@ -7,10 +7,12 @@ from src.runtime import open_with_default_app
 from src.services.notice_service import (
     build_notice_batches,
     build_notice_file_stem,
+    notice_query_for_mode,
     owner_display_name,
     owner_has_collection_lots,
     owner_notice_total,
     render_notice_pdf,
+    render_notice_batch_pdfs,
     should_omit_notice,
 )
 
@@ -30,7 +32,7 @@ class NoticesFrame(ttk.Frame):
         self.rowconfigure(2, weight=1)
 
         self._build()
-        self.refresh_candidates()
+        self._on_mode_change()
 
     def _build(self) -> None:
         intro = ttk.Label(
@@ -44,10 +46,12 @@ class NoticesFrame(ttk.Frame):
         controls.columnconfigure(1, weight=1)
         controls.columnconfigure(5, weight=1)
 
-        ttk.Label(controls, text="Search").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        search = ttk.Entry(controls, textvariable=self.search_var)
-        search.grid(row=0, column=1, sticky="ew", padx=(0, 12))
-        search.bind("<Return>", self.refresh_candidates)
+        ttk.Label(controls, text="Search (individual only)").grid(
+            row=0, column=0, sticky="w", padx=(0, 8)
+        )
+        self.search_entry = ttk.Entry(controls, textvariable=self.search_var)
+        self.search_entry.grid(row=0, column=1, sticky="ew", padx=(0, 12))
+        self.search_entry.bind("<Return>", self.refresh_candidates)
 
         ttk.Label(controls, text="Batch size").grid(row=0, column=2, sticky="w", padx=(0, 8))
         ttk.Entry(controls, textvariable=self.batch_size_var, width=8).grid(
@@ -63,7 +67,7 @@ class NoticesFrame(ttk.Frame):
             width=14,
         )
         mode.grid(row=0, column=5, sticky="w", padx=(0, 12))
-        mode.bind("<<ComboboxSelected>>", self.refresh_candidates)
+        mode.bind("<<ComboboxSelected>>", self._on_mode_change)
 
         ttk.Button(controls, text="Refresh", command=self.refresh_candidates).grid(
             row=0, column=6, sticky="w"
@@ -135,8 +139,9 @@ class NoticesFrame(ttk.Frame):
         )
 
     def refresh_candidates(self, _event: object | None = None) -> None:
-        self.notice_owners = self.repository.list_notice_candidates(self.search_var.get())
         mode = self.mode_var.get()
+        query = notice_query_for_mode(mode, self.search_var.get())
+        self.notice_owners = self.repository.list_notice_candidates(query)
         lien_only = mode == "liens"
 
         if mode == "individual" and self.search_var.get().strip():
@@ -188,6 +193,14 @@ class NoticesFrame(ttk.Frame):
             self._show_preview(children[0])
         else:
             self._set_preview("No matching notice candidates found.")
+
+    def _on_mode_change(self, _event: object | None = None) -> None:
+        if self.mode_var.get() == "individual":
+            self.search_entry.configure(state="normal")
+            self.search_entry.focus_set()
+        else:
+            self.search_entry.configure(state="disabled")
+        self.refresh_candidates()
 
     def _on_select_owner(self, _event: object | None = None) -> None:
         selected = self.owner_tree.selection()
@@ -287,33 +300,38 @@ class NoticesFrame(ttk.Frame):
         except ValueError:
             messagebox.showerror("Invalid batch size", "Batch size must be a whole number.")
             return
-        batches = build_notice_batches(self.filtered_owners, max(batch_size, 1))
-        if not batches:
-            messagebox.showerror("No batches", "No notice batches could be created.")
+        if batch_size < 1:
+            messagebox.showerror("Invalid batch size", "Batch size must be at least 1.")
             return
-        first_batch = batches[0]
-        created_files: list[str] = []
         try:
-            for owner in first_batch.owners:
-                pdf_output = self._render_notice_pdf(
-                    owners=[owner],
-                    season_label=f"{self._season_label()} - Batch {first_batch.batch_number}",
-                    file_stem=build_notice_file_stem(owner),
-                )
-                created_files.append(str(pdf_output))
+            created_files = render_notice_batch_pdfs(
+                owners=self.filtered_owners,
+                batch_size=batch_size,
+                output_dir=self.output_dir,
+                season_label=self._season_label(),
+            )
         except Exception as exc:
             messagebox.showerror("PDF creation failed", str(exc))
             return
         if created_files:
+            first_file = created_files[0]
             self._open_created_file(
-                Path(created_files[0]),
+                first_file,
                 "Batch PDF preview failed",
-                [
-                    f"Batch {first_batch.batch_number}: {first_batch.start_name} to {first_batch.end_name}",
-                    f"Created {len(created_files)} individual PDF files.",
-                    "Example:",
-                    created_files[0],
-                ],
+                ["PDF saved to:", str(first_file)],
+            )
+            messagebox.showinfo(
+                "Notice batch complete",
+                "\n".join(
+                    [
+                        f"Created {len(created_files)} batch PDF file(s).",
+                        f"Included {len(self.filtered_owners)} owner notice(s).",
+                        "Each owner has a separate page.",
+                        "",
+                        "The first batch PDF has been opened.",
+                        f"Folder: {self.output_dir}",
+                    ]
+                ),
             )
             return
         messagebox.showerror("Batch PDF creation failed", "No PDF files were created.")

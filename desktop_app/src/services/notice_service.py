@@ -95,6 +95,41 @@ def build_notice_batches(owners: list[NoticeOwner], batch_size: int) -> list[Not
     return batches
 
 
+def notice_query_for_mode(mode: str, search_text: str) -> str:
+    """Only an individual notice lookup may narrow the owner candidate list."""
+    return search_text.strip() if mode == "individual" else ""
+
+
+def render_notice_batch_pdfs(
+    owners: list[NoticeOwner],
+    batch_size: int,
+    output_dir: Path,
+    season_label: str,
+) -> list[Path]:
+    """Render every owner across one multi-page PDF per configured batch."""
+    batches = build_notice_batches(owners, batch_size)
+    created_files: list[Path] = []
+    batch_count = len(batches)
+    for batch in batches:
+        start_name = re.sub(r"[^A-Za-z0-9]+", "_", batch.start_name).strip("_") or "START"
+        end_name = re.sub(r"[^A-Za-z0-9]+", "_", batch.end_name).strip("_") or "END"
+        file_stem = (
+            f"assessment_notices_batch_{batch.batch_number:03d}_"
+            f"{start_name}_to_{end_name}"
+        )
+        created_files.append(
+            render_notice_pdf(
+                owners=batch.owners,
+                output_dir=output_dir,
+                season_label=(
+                    f"{season_label} - Batch {batch.batch_number} of {batch_count}"
+                ),
+                file_stem=file_stem,
+            )
+        )
+    return created_files
+
+
 def build_notice_file_stem(owner: NoticeOwner, timestamp: datetime | None = None) -> str:
     stamp = (timestamp or datetime.now()).strftime("%m-%d-%y_%H%M%S")
     last_name = owner.last_name or owner.owner_code

@@ -23,7 +23,7 @@ class UtilitiesFrame(ttk.Frame):
         self.open_logs_callback = open_logs_callback
         self.check_updates_callback = check_updates_callback
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(3, weight=1)
 
         ttk.Label(
             self,
@@ -34,21 +34,31 @@ class UtilitiesFrame(ttk.Frame):
         ttk.Button(actions, text="Run Data Health Checks", command=self.run_checks).grid(
             row=0, column=0, sticky="w", padx=(0, 8)
         )
-        ttk.Button(actions, text="Refresh From dBase", command=self.refresh_callback).grid(
+        ttk.Button(actions, text="Browse and Refresh From dBase", command=self.refresh_callback).grid(
             row=0, column=1, sticky="w"
         )
         ttk.Button(actions, text="Reset Screen Tutorials", command=self.reset_tutorials).grid(
             row=0, column=2, sticky="w", padx=(8, 0)
         )
         ttk.Button(actions, text="Check PDF Setup", command=self.check_pdf_setup).grid(
-            row=0, column=3, sticky="w", padx=(8, 0)
+            row=1, column=0, sticky="w", pady=(8, 0)
         )
         ttk.Button(actions, text="Open Log Folder", command=self.open_logs_callback).grid(
-            row=0, column=4, sticky="w", padx=(8, 0)
+            row=1, column=1, sticky="w", padx=(8, 0), pady=(8, 0)
         )
         ttk.Button(actions, text="Check for Updates", command=self.check_updates_callback).grid(
-            row=0, column=5, sticky="w", padx=(8, 0)
+            row=1, column=2, sticky="w", padx=(8, 0), pady=(8, 0)
         )
+
+        ttk.Label(
+            self,
+            text=(
+                "Refresh from dBase is normally used only during migration. If work has already "
+                "been entered in this app, refresh will be safely blocked to protect it."
+            ),
+            wraplength=900,
+            justify="left",
+        ).grid(row=2, column=0, sticky="ew", pady=(0, 12))
 
         self.output = tk.Text(
             self,
@@ -60,7 +70,7 @@ class UtilitiesFrame(ttk.Frame):
             padx=16,
             pady=16,
         )
-        self.output.grid(row=2, column=0, sticky="nsew")
+        self.output.grid(row=3, column=0, sticky="nsew")
         self.output.insert("1.0", "Run the checks to review duplicate codes, lot mismatches, orphan records, and total mismatches.")
         self.output.configure(state="disabled")
 
