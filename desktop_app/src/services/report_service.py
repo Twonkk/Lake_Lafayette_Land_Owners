@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from html import escape
 from pathlib import Path
 
+from reportlab.lib.pagesizes import LETTER, landscape
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import Spacer, TableStyle
+from reportlab.platypus import PageBreak, Paragraph, Table, TableStyle
 
 from src.db.connection import get_connection
 from src.services.pdf_service import (
@@ -11,8 +14,6 @@ from src.services.pdf_service import (
     build_report_story,
     build_story_pdf,
     build_table,
-    page_break,
-    paragraph,
 )
 
 
@@ -46,7 +47,7 @@ def render_owner_report_pdf(db_path: Path, output_dir: Path) -> Path:
             "City/State/ZIP",
             "Phone",
             "Lots",
-            "Resident",
+            "Res.",
             "Lien",
             "Owned Lots",
             "Total Owed",
@@ -89,7 +90,16 @@ def render_owner_report_pdf(db_path: Path, output_dir: Path) -> Path:
     story = build_report_story("Owner Report")
     table = build_table(
         rows,
-        [0.55 * inch, 1.2 * inch, 1.45 * inch, 1.2 * inch, 0.8 * inch, 0.38 * inch, 0.5 * inch, 0.4 * inch, 1.45 * inch, 0.72 * inch],
+        [
+            0.55 * inch, 1.35 * inch, 1.65 * inch, 1.35 * inch, 0.9 * inch,
+            0.4 * inch, 0.5 * inch, 0.38 * inch, 1.75 * inch, 0.75 * inch,
+        ],
+        wrap_cells=True,
+        column_alignments=[
+            "LEFT", "LEFT", "LEFT", "LEFT", "LEFT",
+            "CENTER", "CENTER", "CENTER", "LEFT", "RIGHT",
+        ],
+        font_size=8,
     )
     table.setStyle(
         TableStyle(
@@ -100,7 +110,13 @@ def render_owner_report_pdf(db_path: Path, output_dir: Path) -> Path:
         )
     )
     story.append(table)
-    return build_story_pdf(output_path, story, title="Owner Report")
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Owner Report",
+        footer_text="Lake Lafayette Landowners Association - Owner Report",
+        page_size=landscape(LETTER),
+    )
 
 
 def render_lot_report_pdf(db_path: Path, output_dir: Path) -> Path:
@@ -163,7 +179,17 @@ def render_lot_report_pdf(db_path: Path, output_dir: Path) -> Path:
     story = build_report_story("Lot Report")
     table = build_table(
         rows,
-        [0.42 * inch, 0.6 * inch, 1.0 * inch, 1.0 * inch, 0.7 * inch, 0.35 * inch, 0.5 * inch, 0.6 * inch, 0.62 * inch, 0.62 * inch, 0.62 * inch, 0.62 * inch],
+        [
+            0.48 * inch, 0.58 * inch, 1.15 * inch, 1.4 * inch, 0.85 * inch,
+            0.35 * inch, 0.48 * inch, 0.72 * inch, 0.72 * inch, 0.72 * inch,
+            0.72 * inch, 0.75 * inch,
+        ],
+        wrap_cells=True,
+        column_alignments=[
+            "LEFT", "LEFT", "LEFT", "LEFT", "LEFT", "CENTER", "CENTER",
+            "RIGHT", "RIGHT", "RIGHT", "RIGHT", "RIGHT",
+        ],
+        font_size=7.5,
     )
     table.setStyle(
         TableStyle(
@@ -174,7 +200,13 @@ def render_lot_report_pdf(db_path: Path, output_dir: Path) -> Path:
         )
     )
     story.append(table)
-    return build_story_pdf(output_path, story, title="Lot Report")
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Lot Report",
+        footer_text="Lake Lafayette Landowners Association - Lot Report",
+        page_size=landscape(LETTER),
+    )
 
 
 def render_mailing_labels_pdf(
@@ -212,27 +244,55 @@ def render_mailing_labels_pdf(
     output_path = build_pdf_path(output_dir, "mailing_labels")
     story = []
     labels_per_page = 9
-    current_page = 0
-    for index, owner in enumerate(owners):
-        name = " ".join(part for part in [owner["first_name"], owner["last_name"]] if part).strip().upper()
-        address = str(owner["address"] or "").strip().upper()
-        city_line = " ".join(
-            part
-            for part in [owner["city"], owner["state"], owner["zip"]]
-            if str(part or "").strip()
-        ).strip().upper()
-        top_line = f"{str(owner['primary_lot_number'] or '').strip().upper():<8}{str(owner['owner_code'] or '').strip().upper():>10}".rstrip()
-        story.append(paragraph(top_line, small=True))
-        story.append(paragraph(name, small=True))
-        story.append(paragraph(address or "-", small=True))
-        story.append(paragraph(city_line or "-", small=True))
-        current_page += 1
-        if current_page < labels_per_page and index != len(owners) - 1:
-            story.append(Spacer(1, 0.22 * inch))
-        elif index != len(owners) - 1:
-            story.append(Spacer(1, 0.05 * inch))
-            story.append(page_break())
-            current_page = 0
+    label_style = ParagraphStyle(
+        "MailingLabel",
+        fontName="Helvetica",
+        fontSize=8.5,
+        leading=9.5,
+        spaceAfter=0,
+        splitLongWords=True,
+    )
+    for page_start in range(0, len(owners), labels_per_page):
+        label_rows = []
+        for owner in owners[page_start:page_start + labels_per_page]:
+            name = " ".join(
+                part for part in [owner["first_name"], owner["last_name"]] if part
+            ).strip().upper()
+            address = str(owner["address"] or "").strip().upper()
+            city_line = " ".join(
+                part
+                for part in [owner["city"], owner["state"], owner["zip"]]
+                if str(part or "").strip()
+            ).strip().upper()
+            top_line = " ".join(
+                part
+                for part in [
+                    str(owner["primary_lot_number"] or "").strip().upper(),
+                    str(owner["owner_code"] or "").strip().upper(),
+                ]
+                if part
+            )
+            label_rows.append([
+                Paragraph(
+                    "<br/>".join(escape(line or "-") for line in [top_line, name, address, city_line]),
+                    label_style,
+                )
+            ])
+        label_table = Table(
+            label_rows,
+            colWidths=[4.0 * inch],
+            rowHeights=[0.95 * inch] * len(label_rows),
+        )
+        label_table.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 0),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        story.append(label_table)
+        if page_start + labels_per_page < len(owners):
+            story.append(PageBreak())
 
     return build_story_pdf(
         output_path,
@@ -272,8 +332,18 @@ def render_voter_list_pdf(db_path: Path, output_dir: Path) -> Path:
         ])
     output_path = build_pdf_path(output_dir, "eligible_voter_list")
     story = build_report_story("List of Owners Eligible to Vote")
-    story.append(build_table(table_rows))
-    return build_story_pdf(output_path, story, title="Eligible Voter List")
+    story.append(build_table(
+        table_rows,
+        [0.65 * inch, 3.1 * inch, 1.7 * inch, 0.65 * inch, 0.65 * inch],
+        wrap_cells=True,
+        column_alignments=["CENTER", "LEFT", "LEFT", "CENTER", "CENTER"],
+    ))
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Eligible Voter List",
+        footer_text="Lake Lafayette Landowners Association - Eligible Voter List",
+    )
 
 
 def render_custom_owner_report_pdf(
@@ -330,7 +400,7 @@ def render_custom_owner_report_pdf(
             continue
         filtered.append(row)
 
-    table_rows = [["Code", "Owner", "Address", "Phone", "Lots", "Owed", "Lien", "Collection", "Resident"]]
+    table_rows = [["Code", "Owner", "Address", "Phone", "Lots", "Owed", "Lien", "Collect.", "Res."]]
     for row in filtered:
         table_rows.append([
             row["owner_code"],
@@ -342,8 +412,25 @@ def render_custom_owner_report_pdf(
         ])
     output_path = build_pdf_path(output_dir, "custom_owner_report")
     story = build_report_story("Custom Owner Report")
-    story.append(build_table(table_rows))
-    return build_story_pdf(output_path, story, title="Custom Owner Report")
+    story.append(build_table(
+        table_rows,
+        [
+            0.55 * inch, 1.4 * inch, 2.25 * inch, 0.9 * inch, 1.7 * inch,
+            0.75 * inch, 0.4 * inch, 0.6 * inch, 0.55 * inch,
+        ],
+        wrap_cells=True,
+        column_alignments=[
+            "LEFT", "LEFT", "LEFT", "LEFT", "LEFT", "RIGHT", "CENTER", "CENTER", "CENTER",
+        ],
+        font_size=8,
+    ))
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Custom Owner Report",
+        footer_text="Lake Lafayette Landowners Association - Custom Owner Report",
+        page_size=landscape(LETTER),
+    )
 
 
 def render_custom_lot_report_pdf(
@@ -406,8 +493,25 @@ def render_custom_lot_report_pdf(
         ])
     output_path = build_pdf_path(output_dir, "custom_lot_report")
     story = build_report_story("Custom Lot Report")
-    story.append(build_table(table_rows))
-    return build_story_pdf(output_path, story, title="Custom Lot Report")
+    story.append(build_table(
+        table_rows,
+        [
+            0.5 * inch, 1.45 * inch, 1.9 * inch, 0.9 * inch, 0.4 * inch,
+            0.45 * inch, 0.9 * inch, 0.7 * inch, 0.8 * inch,
+        ],
+        wrap_cells=True,
+        column_alignments=[
+            "LEFT", "LEFT", "LEFT", "LEFT", "CENTER", "CENTER", "CENTER", "CENTER", "RIGHT",
+        ],
+        font_size=8,
+    ))
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Custom Lot Report",
+        footer_text="Lake Lafayette Landowners Association - Custom Lot Report",
+        page_size=landscape(LETTER),
+    )
 
 
 def render_card_sticker_summary_pdf(
@@ -499,5 +603,15 @@ def render_card_sticker_summary_pdf(
     title = mode if mode == "Open ID orders" else f"{mode} - {year}"
     output_path = build_pdf_path(output_dir, mode.lower().replace(" ", "_"))
     story = build_report_story(title)
-    story.append(build_table(table_rows))
-    return build_story_pdf(output_path, story, title=title)
+    story.append(build_table(
+        table_rows,
+        [0.65 * inch, 0.7 * inch, 1.65 * inch, 0.8 * inch, 0.8 * inch, 0.55 * inch, 0.9 * inch, 0.65 * inch],
+        wrap_cells=True,
+        column_alignments=["LEFT", "LEFT", "LEFT", "CENTER", "CENTER", "CENTER", "CENTER", "CENTER"],
+    ))
+    return build_story_pdf(
+        output_path,
+        story,
+        title=title,
+        footer_text=f"Lake Lafayette Landowners Association - {title}",
+    )
