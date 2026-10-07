@@ -20,6 +20,17 @@ PAYMENT_FORM_CODES = {
     "Inheritance Adjustment": "IA",
     "Negotiated Adjustment": "NA",
 }
+PAYMENT_FORM_LABELS = {
+    "1": "Check",
+    "2": "Cash",
+    "3": "Money Order",
+    "4": "Services",
+    "5": "Tax Sale Adjustment",
+    "6": "Private Sale Adjustment",
+    "7": "Inheritance Adjustment",
+    "8": "Negotiated Adjustment",
+    **{code: label for label, code in PAYMENT_FORM_CODES.items()},
+}
 
 PAYMENT_CATEGORY_FIELDS = (
     "current_assessment",
@@ -34,6 +45,12 @@ PAYMENT_CATEGORY_LABELS = {
     "delinquent_interest": "Delinquent interest",
 }
 MONEY_QUANTUM = Decimal("0.01")
+
+
+def payment_form_label(value: object) -> str:
+    """Return the familiar payment-form wording for legacy and app codes."""
+    code = str(value or "").strip().upper()
+    return PAYMENT_FORM_LABELS.get(code, code)
 
 
 @dataclass(slots=True)

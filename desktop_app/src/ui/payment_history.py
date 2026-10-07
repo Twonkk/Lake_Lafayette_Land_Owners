@@ -3,6 +3,7 @@ from pathlib import Path
 from tkinter import ttk
 
 from src.db.repositories import PaymentRepository
+from src.services.payment_service import payment_form_label
 
 
 class PaymentHistoryFrame(ttk.Frame):
@@ -20,7 +21,10 @@ class PaymentHistoryFrame(ttk.Frame):
     def _build(self) -> None:
         intro = ttk.Label(
             self,
-            text="Search posted payments by owner, lot, date, or check/reference number.",
+            text=(
+                "Search the complete owner payment history imported from dBase and "
+                "recorded in this app."
+            ),
         )
         intro.grid(row=0, column=0, sticky="w", pady=(0, 10))
 
@@ -46,24 +50,33 @@ class PaymentHistoryFrame(ttk.Frame):
         right.columnconfigure(0, weight=1)
         right.rowconfigure(1, weight=1)
 
-        ttk.Label(left, text="Posted payments", style="Section.TLabel").grid(
+        ttk.Label(left, text="Owner payment history", style="Section.TLabel").grid(
             row=0, column=0, sticky="w", pady=(0, 8)
         )
         self.history_tree = ttk.Treeview(
             left,
-            columns=("payment_date", "owner_code", "name", "lot_number", "amount", "form"),
+            columns=(
+                "payment_date",
+                "owner_code",
+                "name",
+                "total_owed",
+                "amount",
+                "form",
+                "check_number",
+            ),
             show="headings",
         )
-        for name, width in [
-            ("payment_date", 95),
-            ("owner_code", 85),
-            ("name", 220),
-            ("lot_number", 85),
-            ("amount", 85),
-            ("form", 70),
+        for name, heading, width, anchor in [
+            ("payment_date", "Pay Date", 95, "center"),
+            ("owner_code", "Owner Code", 85, "center"),
+            ("name", "Owner", 210, "w"),
+            ("total_owed", "Total Owed", 95, "e"),
+            ("amount", "Total Paid", 95, "e"),
+            ("form", "Payment Form", 125, "w"),
+            ("check_number", "Check / Ref", 105, "w"),
         ]:
-            self.history_tree.heading(name, text=name.replace("_", " ").title())
-            self.history_tree.column(name, width=width, anchor="w")
+            self.history_tree.heading(name, text=heading)
+            self.history_tree.column(name, width=width, anchor=anchor)
         self.history_tree.grid(row=1, column=0, sticky="nsew")
         self.history_tree.bind("<<TreeviewSelect>>", self._on_select)
         history_scroll = ttk.Scrollbar(left, orient="vertical", command=self.history_tree.yview)
@@ -99,9 +112,10 @@ class PaymentHistoryFrame(ttk.Frame):
                     row["payment_date"] or "",
                     row["owner_code"],
                     name,
-                    row["lot_number"],
+                    f"${float(row['total_owed'] or 0):,.2f}",
                     f"${float(row['payment_amount'] or 0):,.2f}",
-                    row["payment_form"] or "",
+                    payment_form_label(row["payment_form"]),
+                    row["check_number"] or "",
                 ),
             )
         children = self.history_tree.get_children()
@@ -116,38 +130,44 @@ class PaymentHistoryFrame(ttk.Frame):
         if selected:
             self._show_detail(int(selected[0]))
 
-    def _show_detail(self, audit_id: int) -> None:
-        row = self.repository.get_history_detail(audit_id)
+    def _show_detail(self, payment_id: int) -> None:
+        row = self.repository.get_history_detail(payment_id)
         if row is None:
             self._set_detail("Payment detail not found.")
             return
 
         name = " ".join(part for part in [row["last_name"], row["first_name"]] if part).strip()
+        total_owed = float(row["total_owed"] or 0)
+        payment_amount = float(row["payment_amount"] or 0)
         lines = [
-            f"Posted at: {row['created_at'] or ''}",
             f"Payment date: {row['payment_date'] or ''}",
             f"Owner: {row['owner_code']} {name}".strip(),
             f"Address: {row['address'] or ''}",
             f"City/State/ZIP: {row['city'] or ''}, {row['state'] or ''} {row['zip'] or ''}".strip(),
-            f"Lot: {row['lot_number'] or ''}",
-            f"Amount: ${float(row['payment_amount'] or 0):,.2f}",
-            f"Form: {row['payment_form'] or ''}",
+            "",
+            f"Total owed before payment: ${total_owed:,.2f}",
+            f"Total paid: ${payment_amount:,.2f}",
+            f"Balance after payment: ${total_owed - payment_amount:,.2f}",
+            f"Payment form: {payment_form_label(row['payment_form'])}",
             f"Check / ref: {row['check_number'] or ''}",
-            f"Paid through: {row['paid_through'] or ''}",
-            "",
-            "dBase category distribution:",
-            f"Current assessment: ${float(row['paid_current_assessment'] or 0):,.2f}",
-            f"Current interest: ${float(row['paid_current_interest'] or 0):,.2f}",
-            f"Delinquent assessment: ${float(row['paid_delinquent_assessment'] or 0):,.2f}",
-            f"Delinquent interest: ${float(row['paid_delinquent_interest'] or 0):,.2f}",
-            "",
-            f"Lot balance: ${float(row['previous_total_due'] or 0):,.2f} -> ${float(row['new_total_due'] or 0):,.2f}",
-            f"Owner total: ${float(row['previous_owner_total'] or 0):,.2f} -> ${float(row['new_owner_total'] or 0):,.2f}",
-            "",
-            f"Note: {row['note_text'] or ''}",
-            "",
-            f"Backup: {row['backup_path'] or ''}",
         ]
+
+        app_details = row["app_details"]
+        if app_details:
+            lines.extend(["", "Lot distribution recorded by this app:"])
+            for detail in app_details:
+                lines.extend(
+                    [
+                        "",
+                        f"Lot {detail['lot_number']}: ${float(detail['payment_amount'] or 0):,.2f}",
+                        f"  Current assessment: ${float(detail['paid_current_assessment'] or 0):,.2f}",
+                        f"  Current interest: ${float(detail['paid_current_interest'] or 0):,.2f}",
+                        f"  Delinquent assessment: ${float(detail['paid_delinquent_assessment'] or 0):,.2f}",
+                        f"  Delinquent interest: ${float(detail['paid_delinquent_interest'] or 0):,.2f}",
+                        f"  Lot balance: ${float(detail['previous_total_due'] or 0):,.2f} -> ${float(detail['new_total_due'] or 0):,.2f}",
+                        f"  Paid through: {detail['paid_through'] or ''}",
+                    ]
+                )
         self._set_detail("\n".join(lines))
 
     def _set_detail(self, text: str) -> None:
