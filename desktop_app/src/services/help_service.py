@@ -27,6 +27,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
         summary="Use this screen to find an owner or lot, review the record, and revise basic information.",
         actions=(
             "Search by owner name, owner code, or lot number.",
+            "Open Payment History to see this owner's imported dBase and new-app payments.",
             "Save Owner Changes updates the owner contact and status fields.",
             "Save Lot Changes updates the selected lot detail fields.",
             "Save Note adds a new note to the selected owner record.",
@@ -67,10 +68,11 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
     ),
     "payment_history": ScreenHelp(
         title="Payment History",
-        summary="Use this screen to review previously posted payments.",
+        summary="Use this screen to review complete owner payment history from dBase and this app.",
         actions=(
-            "Search by owner, lot, date, or check/reference number.",
-            "Select a payment to review the full detail and audit values.",
+            "Search by owner name, owner code, payment date, form, or check/reference number.",
+            "Select a payment to review the owner's owed amount, amount paid, and resulting balance.",
+            "Payments recorded in this app also show the distribution across the owner's lots.",
         ),
         legacy_reference="In dBase: Group 1, option 10 — Display History Records.",
     ),

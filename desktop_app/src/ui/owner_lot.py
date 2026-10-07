@@ -10,6 +10,7 @@ from src.services.owner_lot_service import (
     update_lot_record,
     update_owner_record,
 )
+from src.services.payment_service import payment_form_label
 
 
 class OwnerLotFrame(ttk.Frame):
@@ -21,6 +22,7 @@ class OwnerLotFrame(ttk.Frame):
         self.results: list[dict] = []
         self.selected_owner_code: str | None = None
         self.selected_lot_number: str | None = None
+        self.payment_history_summary_var = tk.StringVar(value="Select an owner to see payment history.")
 
         self.owner_vars = {
             "owner_code": tk.StringVar(),
@@ -115,13 +117,16 @@ class OwnerLotFrame(ttk.Frame):
 
         owner_tab = ttk.Frame(notebook, style="App.TFrame", padding=12)
         lot_tab = ttk.Frame(notebook, style="App.TFrame", padding=12)
+        payment_history_tab = ttk.Frame(notebook, style="App.TFrame", padding=12)
         note_tab = ttk.Frame(notebook, style="App.TFrame", padding=12)
         notebook.add(owner_tab, text="Owner")
         notebook.add(lot_tab, text="Lot")
+        notebook.add(payment_history_tab, text="Payment History")
         notebook.add(note_tab, text="Notes")
 
         self._build_owner_tab(owner_tab)
         self._build_lot_tab(lot_tab)
+        self._build_payment_history_tab(payment_history_tab)
         self._build_note_tab(note_tab)
 
     def _build_owner_tab(self, parent: ttk.Frame) -> None:
@@ -242,6 +247,48 @@ class OwnerLotFrame(ttk.Frame):
         self.new_note_text.grid(row=3, column=0, sticky="nsew")
         ttk.Button(parent, text="Save Note", command=self.save_note).grid(row=4, column=0, sticky="ew", pady=(12, 0))
 
+    def _build_payment_history_tab(self, parent: ttk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(2, weight=1)
+
+        ttk.Label(
+            parent,
+            text="Complete owner payment history",
+            style="Section.TLabel",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 4))
+        ttk.Label(parent, textvariable=self.payment_history_summary_var).grid(
+            row=1, column=0, sticky="w", pady=(0, 8)
+        )
+
+        self.payment_history_tree = ttk.Treeview(
+            parent,
+            columns=("payment_date", "total_owed", "amount", "form", "check_number"),
+            show="headings",
+        )
+        for name, heading, width, anchor in [
+            ("payment_date", "Pay Date", 95, "center"),
+            ("total_owed", "Total Owed", 100, "e"),
+            ("amount", "Total Paid", 100, "e"),
+            ("form", "Payment Form", 150, "w"),
+            ("check_number", "Check / Ref", 110, "w"),
+        ]:
+            self.payment_history_tree.heading(name, text=heading)
+            self.payment_history_tree.column(name, width=width, anchor=anchor)
+        self.payment_history_tree.grid(row=2, column=0, sticky="nsew")
+
+        vertical_scroll = ttk.Scrollbar(
+            parent, orient="vertical", command=self.payment_history_tree.yview
+        )
+        vertical_scroll.grid(row=2, column=1, sticky="ns")
+        horizontal_scroll = ttk.Scrollbar(
+            parent, orient="horizontal", command=self.payment_history_tree.xview
+        )
+        horizontal_scroll.grid(row=3, column=0, sticky="ew")
+        self.payment_history_tree.configure(
+            yscrollcommand=vertical_scroll.set,
+            xscrollcommand=horizontal_scroll.set,
+        )
+
     def run_search(self, _event: object | None = None) -> None:
         self.results = self.repository.search(self.search_var.get())
         self.result_tree.delete(*self.result_tree.get_children())
@@ -281,6 +328,7 @@ class OwnerLotFrame(ttk.Frame):
         owner = detail["owner"]
         lots = detail["lots"]
         notes = detail["notes"]
+        payments = detail["payments"]
 
         self.owner_vars["owner_code"].set(owner["owner_code"] or "")
         self.owner_vars["last_name"].set(owner["last_name"] or "")
@@ -317,6 +365,28 @@ class OwnerLotFrame(ttk.Frame):
             self._load_lot_detail(lot_children[0], lots)
         else:
             self._clear_lot_form()
+
+        self.payment_history_tree.delete(*self.payment_history_tree.get_children())
+        for payment in payments:
+            self.payment_history_tree.insert(
+                "",
+                "end",
+                iid=f"owner-payment-{payment['id']}",
+                values=(
+                    payment["payment_date"] or "",
+                    f"${float(payment['total_owed'] or 0):,.2f}",
+                    f"${float(payment['payment_amount'] or 0):,.2f}",
+                    payment_form_label(payment["payment_form"]),
+                    payment["check_number"] or "",
+                ),
+            )
+        if payments:
+            suffix = "record" if len(payments) == 1 else "records"
+            self.payment_history_summary_var.set(
+                f"{len(payments):,} payment {suffix} found for this owner."
+            )
+        else:
+            self.payment_history_summary_var.set("No payment history found for this owner.")
 
         lines = []
         if notes:
@@ -371,6 +441,8 @@ class OwnerLotFrame(ttk.Frame):
             variable.set("")
         self.lot_tree.delete(*self.lot_tree.get_children())
         self._clear_lot_form()
+        self.payment_history_tree.delete(*self.payment_history_tree.get_children())
+        self.payment_history_summary_var.set("Select an owner to see payment history.")
         self.notes_text.configure(state="normal")
         self.notes_text.delete("1.0", "end")
         self.notes_text.configure(state="disabled")
