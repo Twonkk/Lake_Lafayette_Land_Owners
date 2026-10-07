@@ -378,4 +378,45 @@ SCHEMA_STATEMENTS = [
         source_file TEXT NOT NULL DEFAULT 'PERMFILE.DBF'
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS legacy_owner_candidates (
+        owner_code TEXT NOT NULL,
+        source_file TEXT NOT NULL,
+        source_record_number INTEGER NOT NULL,
+        deleted_flag TEXT DEFAULT 'N',
+        last_name TEXT,
+        first_name TEXT,
+        secondary_owner_flag TEXT,
+        note_number INTEGER,
+        address TEXT,
+        city TEXT,
+        state TEXT,
+        zip TEXT,
+        phone TEXT,
+        resident_flag TEXT,
+        plat TEXT,
+        current_flag TEXT,
+        sale_date TEXT,
+        hold_mail_flag TEXT,
+        ineligible_flag TEXT,
+        collection_flag TEXT,
+        collection_date TEXT,
+        lien_flag TEXT,
+        number_lots INTEGER DEFAULT 0,
+        primary_lot_number TEXT,
+        total_owed NUMERIC DEFAULT 0,
+        PRIMARY KEY (owner_code, source_file, source_record_number)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS migration_review_decisions (
+        category TEXT NOT NULL,
+        record_key TEXT NOT NULL,
+        decision TEXT NOT NULL,
+        notes TEXT,
+        decided_at TEXT NOT NULL,
+        backup_path TEXT,
+        PRIMARY KEY (category, record_key)
+    )
+    """,
 ]

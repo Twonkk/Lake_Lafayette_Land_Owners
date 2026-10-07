@@ -54,7 +54,10 @@ to confirm the PDF runtime is available before testing notice/report printing.
 - imports owner, lot, notes, and payment history from the legacy DBF files
 - preserves missing legacy owner codes as safe, clearly marked review records instead of orphaning their lots or payment history
 - provides a familiar Menu with the original dBase group and option numbers
-- keeps the sidebar uncluttered with one Menu button
+- keeps the sidebar uncluttered with Menu and Migration Review buttons
+- turns incomplete owner records, special X-lot exclusions, and legacy rounding differences into a client-facing decision queue
+- restores recoverable deleted owners only after confirmation and records every migration decision with a backup
+- prevents deletion when a placeholder is still connected to lots, payments, sales, notes, or history
 - uses larger controls, Windows DPI awareness, maximized startup, and a scrollable Menu for scaled displays
 - connects every main Help panel to the dBase option it replaces
 - provides owner/lot search and the primary daily workflows after import

@@ -21,6 +21,7 @@ from src.services.help_service import get_screen_help
 from src.services.import_service import (
     NativeActivityError,
     backfill_financial_import_if_empty,
+    backfill_owner_recovery_candidates_if_empty,
     database_has_core_data,
     ensure_legacy_refresh_is_safe,
     native_activity_display_lines,
@@ -35,6 +36,7 @@ from src.ui.classic_menu import ClassicMenuFrame, MENU_SIDEBAR_LABEL
 from src.ui.financials import FinancialsFrame
 from src.ui.import_setup import ImportSetupFrame
 from src.ui.lien_collection import LienCollectionFrame
+from src.ui.migration_review import MigrationReviewFrame
 from src.ui.notices import NoticesFrame
 from src.ui.owner_lot import OwnerLotFrame
 from src.ui.payment_history import PaymentHistoryFrame
@@ -70,6 +72,7 @@ class LakeLotApp(tk.Tk):
         initialize_database(self.db_path)
         if self.legacy_dir.exists():
             backfill_financial_import_if_empty(self.legacy_dir, self.db_path)
+            backfill_owner_recovery_candidates_if_empty(self.legacy_dir, self.db_path)
         self.initial_setup_required = not database_has_core_data(self.db_path)
         self.owner_repository = OwnerRepository(self.db_path)
         self.screen_container: ttk.Frame | None = None
@@ -192,7 +195,10 @@ class LakeLotApp(tk.Tk):
         if self.initial_setup_required:
             buttons = [("Initial Setup", self.show_import_setup)]
         else:
-            buttons = [(MENU_SIDEBAR_LABEL, self.show_menu)]
+            buttons = [
+                (MENU_SIDEBAR_LABEL, self.show_menu),
+                ("Migration Review", self.show_migration_review),
+            ]
 
         for idx, (label, action) in enumerate(buttons, start=2):
             ttk.Button(sidebar, text=label, style="Nav.TButton", command=action).grid(
@@ -244,6 +250,13 @@ class LakeLotApp(tk.Tk):
             "Menu",
             lambda parent: ClassicMenuFrame(parent, self.navigate_to),
             help_key="menu",
+        )
+
+    def show_migration_review(self) -> None:
+        self._set_screen(
+            "Migration Review",
+            lambda parent: MigrationReviewFrame(parent, self.db_path),
+            help_key="migration_review",
         )
 
     def navigate_to(self, destination: str) -> None:

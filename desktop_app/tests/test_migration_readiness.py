@@ -86,7 +86,23 @@ class ImportPreservationTests(DatabaseTestCase):
         def fake_read(path: Path) -> list[dict]:
             return rows.get(path.name, [])
 
-        with patch("src.importers.dbf_importer._read_dbf", side_effect=fake_read):
+        recovery_candidates = [{
+            "OWNR_CODE": 9999,
+            "LAST_NAME": "RECOVERABLE",
+            "FIRST_NAME": "OWNER",
+            "ADDRESS": "1 MAIN",
+            "CURRENT": "T",
+            "_source_file": "ONERFILE.DBF",
+            "_record_number": 12,
+            "_deleted": "Y",
+        }]
+        with (
+            patch("src.importers.dbf_importer._read_dbf", side_effect=fake_read),
+            patch(
+                "src.importers.dbf_importer._read_owner_recovery_candidates",
+                return_value=recovery_candidates,
+            ),
+        ):
             result = import_legacy_directory(self.temp_path, self.db_path)
 
         self.assertEqual(result["placeholder_owners_imported"], 1)
@@ -96,11 +112,15 @@ class ImportPreservationTests(DatabaseTestCase):
                 "SELECT * FROM owners WHERE owner_code = '9999'"
             ).fetchone()
             lot = connection.execute("SELECT owner_code FROM lots WHERE lot_number = 'B1'").fetchone()
+            candidate = connection.execute(
+                "SELECT last_name, first_name, deleted_flag FROM legacy_owner_candidates WHERE owner_code = '9999'"
+            ).fetchone()
         self.assertEqual(owner["status"], "IMPORT REVIEW REQUIRED")
         self.assertEqual(owner["hold_mail_flag"], "Y")
         self.assertEqual(owner["ineligible_flag"], "Y")
         self.assertEqual(owner["total_owed"], 20)
         self.assertEqual(lot["owner_code"], "9999")
+        self.assertEqual(tuple(candidate), ("RECOVERABLE", "OWNER", "Y"))
 
 
 class EncumbranceSeparationTests(DatabaseTestCase):

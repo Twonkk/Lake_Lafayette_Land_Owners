@@ -22,6 +22,21 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
         ),
         legacy_reference="This replaces the original dBase main MENU.PRG screen and preserves its 1, 2, and 3 group order.",
     ),
+    "migration_review": ScreenHelp(
+        title="Migration Review",
+        summary="Use this screen with the client to decide how incomplete or inconsistent dBase records should be handled.",
+        actions=(
+            "Complete this review after the final dBase refresh; recorded decisions are protected from being overwritten by another refresh.",
+            "Select an item to see the source evidence, explanation, and recommended decision.",
+            "Restore Suggested Owner uses a recoverable deleted or backup owner record only after confirmation.",
+            "Enter Owner Details lets the client supply a missing current owner's verified information.",
+            "Keep as Historical preserves payment and property history without treating the code as a current owner.",
+            "Accept X-Lot Exclusion records that a special frozen X lot should remain outside current assessments.",
+            "Use Lot Balance Total or Keep dBase Owner Total resolves small legacy rounding differences.",
+            "Delete is available only when no lot, payment, sale, note, or history record refers to the placeholder.",
+        ),
+        legacy_reference="This is a migration-safety screen added for records that the original dBase menus could hide or leave inconsistent.",
+    ),
     "owners_lots": ScreenHelp(
         title="Owners and Lots",
         summary="Use this screen to find an owner or lot, review the record, and revise basic information.",
