@@ -52,6 +52,7 @@ SCHEMA_STATEMENTS = [
         dock_flag TEXT,
         development_status TEXT,
         collection_flag TEXT,
+        county_land_trust_flag TEXT DEFAULT 'N',
         freeze_flag TEXT,
         appraised_value NUMERIC DEFAULT 0,
         assessed_value NUMERIC DEFAULT 0,
@@ -74,6 +75,7 @@ SCHEMA_STATEMENTS = [
         payment_date TEXT,
         payment_form TEXT,
         check_number TEXT,
+        session_id INTEGER,
         FOREIGN KEY (owner_code) REFERENCES owners(owner_code)
     )
     """,
@@ -146,6 +148,23 @@ SCHEMA_STATEMENTS = [
         transaction_type TEXT,
         status TEXT,
         source TEXT NOT NULL DEFAULT 'app',
+        source_account_code TEXT,
+        destination_account_code TEXT,
+        correction_of_id INTEGER,
+        FOREIGN KEY (account_code) REFERENCES financial_accounts(account_code)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS financial_transaction_legs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        transaction_id INTEGER NOT NULL,
+        account_code TEXT NOT NULL,
+        role TEXT NOT NULL,
+        month_expense_change NUMERIC DEFAULT 0,
+        month_deposit_change NUMERIC DEFAULT 0,
+        year_to_date_change NUMERIC DEFAULT 0,
+        budget_to_date_change NUMERIC DEFAULT 0,
+        FOREIGN KEY (transaction_id) REFERENCES financial_transactions(id),
         FOREIGN KEY (account_code) REFERENCES financial_accounts(account_code)
     )
     """,
@@ -202,8 +221,17 @@ SCHEMA_STATEMENTS = [
         new_total_due NUMERIC NOT NULL,
         previous_owner_total NUMERIC NOT NULL,
         new_owner_total NUMERIC NOT NULL,
+        session_id INTEGER,
         FOREIGN KEY (owner_code) REFERENCES owners(owner_code),
         FOREIGN KEY (lot_number) REFERENCES lots(lot_number)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS payment_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT NOT NULL,
+        posting_date TEXT NOT NULL,
+        closed_at TEXT
     )
     """,
     """
@@ -217,6 +245,8 @@ SCHEMA_STATEMENTS = [
         owners_updated INTEGER NOT NULL,
         excluded_lots INTEGER NOT NULL,
         freeze_lots INTEGER NOT NULL,
+        assessment_season TEXT,
+        assessment_year TEXT,
         notes TEXT
     )
     """,
@@ -260,6 +290,39 @@ SCHEMA_STATEMENTS = [
         lot_number TEXT,
         issue_date TEXT NOT NULL,
         quantity INTEGER NOT NULL,
+        owner_quantity INTEGER DEFAULT 0,
+        renter_quantity INTEGER DEFAULT 0,
+        issue_year INTEGER,
+        completed_flag TEXT DEFAULT 'N',
+        notes TEXT,
+        backup_path TEXT,
+        FOREIGN KEY (owner_code) REFERENCES owners(owner_code),
+        FOREIGN KEY (lot_number) REFERENCES lots(lot_number)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS id_card_completion_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT NOT NULL,
+        source TEXT NOT NULL,
+        source_record_id INTEGER NOT NULL,
+        owner_code TEXT,
+        backup_path TEXT,
+        UNIQUE (source, source_record_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS encumbrance_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TEXT NOT NULL,
+        action_date TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        action TEXT NOT NULL,
+        owner_code TEXT NOT NULL,
+        lot_number TEXT,
+        amount NUMERIC DEFAULT 0,
+        book TEXT,
+        page TEXT,
         notes TEXT,
         backup_path TEXT,
         FOREIGN KEY (owner_code) REFERENCES owners(owner_code),

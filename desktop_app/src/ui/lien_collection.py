@@ -3,12 +3,14 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from src.db.repositories import OwnerRepository
+from src.runtime import open_with_default_app
 from src.services.encumbrance_service import (
     assign_collection,
     default_action_date,
     record_lien,
     remove_collection,
     remove_lien,
+    render_encumbrance_history_pdf,
 )
 
 
@@ -35,7 +37,7 @@ class LienCollectionFrame(ttk.Frame):
     def _build(self) -> None:
         ttk.Label(
             self,
-            text="Record lien filing/removal and assign or remove lots from collection.",
+            text="Record liens by lot or assign the selected owner's account to a collection agency.",
         ).grid(row=0, column=0, sticky="w", pady=(0, 12))
 
         split = ttk.Panedwindow(self, orient="horizontal")
@@ -74,7 +76,7 @@ class LienCollectionFrame(ttk.Frame):
         ttk.Label(left, text="Owner lots", style="Section.TLabel").grid(row=3, column=0, sticky="w", pady=(12, 8))
         self.lot_tree = ttk.Treeview(
             left,
-            columns=("selected", "lot_number", "due", "lien", "collection"),
+            columns=("selected", "lot_number", "due", "lien", "county_trust"),
             show="headings",
             height=10,
         )
@@ -83,7 +85,7 @@ class LienCollectionFrame(ttk.Frame):
             ("lot_number", "Lot", 90),
             ("due", "Balance", 90),
             ("lien", "Lien", 60),
-            ("collection", "Collection", 80),
+            ("county_trust", "County Trust", 95),
         ]:
             self.lot_tree.heading(name, text=text)
             self.lot_tree.column(name, width=width, anchor="center")
@@ -104,8 +106,11 @@ class LienCollectionFrame(ttk.Frame):
         actions.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(16, 0))
         ttk.Button(actions, text="File Lien On Selected Lots", command=self.file_lien).grid(row=0, column=0, sticky="ew", pady=4)
         ttk.Button(actions, text="Remove Lien From Selected Lots", command=self.clear_lien).grid(row=1, column=0, sticky="ew", pady=4)
-        ttk.Button(actions, text="Assign Selected Lots To Collection", command=self.mark_collection).grid(row=2, column=0, sticky="ew", pady=4)
-        ttk.Button(actions, text="Remove Selected Lots From Collection", command=self.clear_collection).grid(row=3, column=0, sticky="ew", pady=4)
+        ttk.Button(actions, text="Assign Owner Account To Collection", command=self.mark_collection).grid(row=2, column=0, sticky="ew", pady=4)
+        ttk.Button(actions, text="Remove Owner Account From Collection", command=self.clear_collection).grid(row=3, column=0, sticky="ew", pady=4)
+        ttk.Button(actions, text="Open Owner Lien / Collection Log", command=self.open_current_log).grid(
+            row=4, column=0, sticky="ew", pady=(12, 4)
+        )
 
     def run_search(self, _event: object | None = None) -> None:
         self.results = self.repository.search(self.search_var.get())
@@ -145,7 +150,7 @@ class LienCollectionFrame(ttk.Frame):
                     lot["lot_number"],
                     f"${float(lot['total_due'] or 0):,.2f}",
                     lot["lien_flag"] or "",
-                    lot["collection_flag"] or "",
+                    lot["county_land_trust_flag"] or "",
                 ),
             )
 
@@ -173,6 +178,21 @@ class LienCollectionFrame(ttk.Frame):
     def _selected_lot_list(self) -> list[str]:
         return sorted(self.selected_lots)
 
+    def _open_log(self, owner_code: str) -> None:
+        try:
+            output = render_encumbrance_history_pdf(
+                self.db_path, owner_code, self.db_path.parent / "generated_reports"
+            )
+            open_with_default_app(output)
+        except Exception as exc:
+            messagebox.showerror("Change log failed", str(exc))
+
+    def open_current_log(self) -> None:
+        if not self.selected_owner_code:
+            messagebox.showerror("Missing owner", "Select an owner first.")
+            return
+        self._open_log(self.selected_owner_code)
+
     def file_lien(self) -> None:
         try:
             amount = float(self.lien_amount_var.get().strip() or 0)
@@ -189,6 +209,7 @@ class LienCollectionFrame(ttk.Frame):
             messagebox.showerror("Lien failed", str(exc))
             return
         messagebox.showinfo("Lien recorded", f"Filed lien on {len(result.lot_numbers)} lot(s).")
+        self._open_log(result.owner_code)
         self._refresh_current_owner()
 
     def clear_lien(self) -> None:
@@ -203,6 +224,7 @@ class LienCollectionFrame(ttk.Frame):
             messagebox.showerror("Lien removal failed", str(exc))
             return
         messagebox.showinfo("Lien removed", f"Removed lien from {len(result.lot_numbers)} lot(s).")
+        self._open_log(result.owner_code)
         self._refresh_current_owner()
 
     def mark_collection(self) -> None:
@@ -216,7 +238,8 @@ class LienCollectionFrame(ttk.Frame):
         except Exception as exc:
             messagebox.showerror("Collection assignment failed", str(exc))
             return
-        messagebox.showinfo("Collection updated", f"Assigned {len(result.lot_numbers)} lot(s) to collection.")
+        messagebox.showinfo("Collection updated", "The owner's account was assigned to the collection agency.")
+        self._open_log(result.owner_code)
         self._refresh_current_owner()
 
     def clear_collection(self) -> None:
@@ -224,10 +247,12 @@ class LienCollectionFrame(ttk.Frame):
             result = remove_collection(
                 self.db_path,
                 self.selected_owner_code or "",
-                self._selected_lot_list(),
+                [],
+                self.date_var.get().strip(),
             )
         except Exception as exc:
             messagebox.showerror("Collection removal failed", str(exc))
             return
-        messagebox.showinfo("Collection updated", f"Removed {len(result.lot_numbers)} lot(s) from collection.")
+        messagebox.showinfo("Collection updated", "The owner's account was removed from the collection agency.")
+        self._open_log(result.owner_code)
         self._refresh_current_owner()

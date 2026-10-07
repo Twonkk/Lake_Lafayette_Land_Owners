@@ -73,7 +73,7 @@ def default_sale_date() -> str:
 def _make_backup(db_path: Path) -> Path:
     backup_dir = db_path.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     backup_path = backup_dir / f"{db_path.stem}_sale_{stamp}.sqlite3"
     shutil.copy2(db_path, backup_path)
     return backup_path
@@ -523,3 +523,24 @@ def render_property_sale_receipt_pdf(
         line_height=12.65,
         title="Property Sale Receipt",
     )
+
+
+def render_property_sale_reversal_pdf(
+    result: PropertySaleReverseResult,
+    sale_group: PropertySaleGroup,
+    output_dir: Path,
+) -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = build_pdf_path(output_dir, f"property_sale_reversal_{timestamp}")
+    lines = [
+        "PROPERTY SALE REVERSAL",
+        "",
+        f"ORIGINAL SALE DATE: {sale_group.sale_date}",
+        f"ORIGINAL SELLER / RESTORED OWNER: {result.seller_owner_code}",
+        f"ORIGINAL BUYER: {result.buyer_owner_code}",
+        f"LOTS RETURNED: {', '.join(result.returned_lots)}",
+        f"REVERSAL RECORDED: {datetime.now().isoformat(timespec='seconds')}",
+        "",
+        f"BACKUP: {result.backup_path}",
+    ]
+    return write_preformatted_pages_pdf(output_path, [lines], title="Property Sale Reversal")

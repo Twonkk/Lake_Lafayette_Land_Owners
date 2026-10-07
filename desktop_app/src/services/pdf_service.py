@@ -120,7 +120,12 @@ def build_report_story(title: str, subtitle_lines: Iterable[str] | None = None) 
     return story
 
 
-def build_table(data: list[list[object]], column_widths: list[float], *, repeat_header: bool = True) -> Table:
+def build_table(
+    data: list[list[object]],
+    column_widths: list[float] | None = None,
+    *,
+    repeat_header: bool = True,
+) -> Table:
     table = Table(data, colWidths=column_widths, repeatRows=1 if repeat_header else 0)
     table.setStyle(
         TableStyle(

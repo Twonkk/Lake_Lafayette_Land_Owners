@@ -21,6 +21,7 @@ class ImportResult:
     legacy_id_history_imported: int = 0
     legacy_collection_lots_imported: int = 0
     legacy_system_history_imported: int = 0
+    placeholder_owners_imported: int = 0
     backup_path: str = ""
 
 
@@ -45,6 +46,8 @@ NATIVE_ACTIVITY_LABELS = {
     "property_sales": "Property sales or reversals",
     "boat_sticker_purchases": "Boat sticker purchases",
     "id_card_issues": "ID cards issued",
+    "id_card_completion_events": "ID card orders marked filled",
+    "encumbrance_events": "Lien or collection changes",
     "financial_transactions": "Financial transactions",
 }
 
@@ -65,6 +68,8 @@ def native_activity_counts(sqlite_path: Path) -> dict[str, int]:
         "property_sales",
         "boat_sticker_purchases",
         "id_card_issues",
+        "id_card_completion_events",
+        "encumbrance_events",
     ]
     with get_connection(sqlite_path) as connection:
         counts = {
@@ -151,6 +156,7 @@ def run_legacy_import(
         legacy_id_history_imported=result.get("legacy_id_history_imported", 0),
         legacy_collection_lots_imported=result.get("legacy_collection_lots_imported", 0),
         legacy_system_history_imported=result.get("legacy_system_history_imported", 0),
+        placeholder_owners_imported=result.get("placeholder_owners_imported", 0),
         backup_path=str(backup_path or ""),
     )
 

@@ -32,10 +32,20 @@ class FinancialYearTests(DatabaseTestCase):
                 "INSERT INTO financial_accounts (account_code, account_name, fiscal_year) VALUES ('AA', 'Test', '2026')"
             )
             connection.execute(
+                "INSERT INTO financial_accounts (account_code, account_name, fiscal_year) VALUES ('WA', 'Checking', '2026')"
+            )
+            connection.execute(
                 """
                 INSERT INTO financial_monthly (
                     account_code, fiscal_year, fiscal_month, month_expense, month_deposit, year_to_date
                 ) VALUES ('AA', '2026', 4, 0, 0, 0)
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO financial_monthly (
+                    account_code, fiscal_year, fiscal_month, month_expense, month_deposit, year_to_date
+                ) VALUES ('WA', '2026', 4, 0, 0, 0)
                 """
             )
 
@@ -50,6 +60,7 @@ class FinancialYearTests(DatabaseTestCase):
                 amount=25.0,
                 payee="Test",
                 memo="Earlier transaction",
+                counter_account_code="WA",
             ),
         )
 
@@ -59,6 +70,15 @@ class FinancialYearTests(DatabaseTestCase):
                 [str(number)],
             ).fetchone()
         self.assertEqual(row, ("2026", "2025-12-15", "app"))
+        with closing(sqlite3.connect(self.db_path)) as connection:
+            legs = connection.execute(
+                """
+                SELECT account_code, role, month_expense_change, year_to_date_change
+                FROM financial_transaction_legs
+                ORDER BY id
+                """
+            ).fetchall()
+        self.assertEqual(legs, [("AA", "expense", 25.0, 25.0), ("WA", "payment", 25.0, -25.0)])
         self.assertTrue(any((self.db_path.parent / "backups").glob("*financial_transaction*.sqlite3")))
 
 
@@ -87,7 +107,7 @@ class ReconciliationTests(DatabaseTestCase):
     def test_reconciliation_reports_only_aggregate_results(self) -> None:
         with closing(sqlite3.connect(self.db_path)) as connection, connection:
             connection.execute(
-                "INSERT INTO owners (owner_code, number_lots, total_owed) VALUES ('1', 2, 10)"
+                "INSERT INTO owners (owner_code, number_lots, total_owed, current_flag) VALUES ('1', 2, 10, 'T')"
             )
             connection.execute(
                 """

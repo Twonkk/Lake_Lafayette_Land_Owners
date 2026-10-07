@@ -9,6 +9,7 @@ from reportlab.lib.pagesizes import LETTER
 from reportlab.pdfgen import canvas
 
 from src.services.pdf_service import build_pdf_path
+from src.db.connection import get_connection
 
 
 @dataclass(slots=True)
@@ -19,7 +20,7 @@ class NoticeLotLine:
     current_assessment: float
     current_interest: float
     total_due: float
-    collection_flag: str
+    county_land_trust_flag: str
     freeze_flag: str
 
 
@@ -48,15 +49,17 @@ class NoticeBatch:
 
 
 def should_omit_notice(owner: NoticeOwner, lien_only: bool) -> bool:
-    if owner.last_name in {"LL COMPANY", "ASSOCIATION"}:
+    last_name = owner.last_name.strip().upper()
+    address = owner.address.strip().upper()
+    if last_name in {"LL CO", "LL CO.", "LL COMPANY", "ASSOCIATION"}:
         return True
-    if owner.address in {"UNKNOWN", "DECEASED"}:
+    if address in {"UNKNOWN", "DECEASED"}:
         return True
-    if owner.hold_mail_flag == "Y":
+    if owner.hold_mail_flag.strip().upper() == "Y":
         return True
-    if owner.current_flag not in {"T", "Y", "True", "TRUE", ""}:
+    if owner.current_flag.strip().upper() not in {"T", "Y", "TRUE", ""}:
         return True
-    if lien_only and owner.lien_flag != "Y":
+    if lien_only and owner.lien_flag.strip().upper() != "Y":
         return True
     return False
 
@@ -66,13 +69,32 @@ def owner_display_name(owner: NoticeOwner) -> str:
 
 
 def owner_notice_total(owner: NoticeOwner) -> float:
+    billable_lots = [lot for lot in owner.lots if lot.county_land_trust_flag != "Y"]
     if any(lot.freeze_flag == "Y" for lot in owner.lots):
-        return round(sum(lot.current_assessment for lot in owner.lots), 2)
-    return round(sum(lot.total_due for lot in owner.lots), 2)
+        return round(sum(lot.current_assessment for lot in billable_lots), 2)
+    return round(sum(lot.total_due for lot in billable_lots), 2)
 
 
-def owner_has_collection_lots(owner: NoticeOwner) -> bool:
-    return any(lot.collection_flag == "Y" for lot in owner.lots)
+def owner_has_county_land_trust_lots(owner: NoticeOwner) -> bool:
+    return any(lot.county_land_trust_flag == "Y" for lot in owner.lots)
+
+
+def default_notice_season_label(db_path: Path) -> str:
+    with get_connection(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT TRIM(COALESCE(season, '')) AS season,
+                   TRIM(COALESCE(year, '')) AS year
+            FROM legacy_system_history
+            WHERE TRIM(COALESCE(season, '')) <> ''
+               OR TRIM(COALESCE(year, '')) <> ''
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    if row is None:
+        return str(datetime.now().year)
+    return " ".join(part for part in [row["season"], row["year"]] if part).strip()
 
 
 def build_notice_batches(owners: list[NoticeOwner], batch_size: int) -> list[NoticeBatch]:
@@ -142,11 +164,12 @@ def build_notice_file_stem(owner: NoticeOwner, timestamp: datetime | None = None
 def _notice_table_lines(owner: NoticeOwner) -> tuple[list[str], float, bool, bool]:
     has_freeze = any(lot.freeze_flag == "Y" for lot in owner.lots)
     due_total = owner_notice_total(owner)
-    collection_note = owner_has_collection_lots(owner)
+    collection_note = owner_has_county_land_trust_lots(owner)
+    billable_lots = [lot for lot in owner.lots if lot.county_land_trust_flag != "Y"]
     lot_rows = []
     for lot in owner.lots:
         total_display = lot.current_assessment if has_freeze else lot.total_due
-        marker = "**" if collection_note and lot.collection_flag == "Y" else ""
+        marker = "**" if lot.county_land_trust_flag == "Y" else ""
         lot_rows.append(
             f"{lot.lot_number:<6}{marker:<3}"
             f"{lot.delinquent_assessment:>12.2f}"
@@ -158,10 +181,10 @@ def _notice_table_lines(owner: NoticeOwner) -> tuple[list[str], float, bool, boo
 
     total_line = (
         f"{'':<9}"
-        f"{sum(lot.delinquent_assessment for lot in owner.lots):>12.2f}"
-        f"{sum(lot.delinquent_interest for lot in owner.lots):>12.2f}"
-        f"{sum(lot.current_assessment for lot in owner.lots):>12.2f}"
-        f"{sum(lot.current_interest for lot in owner.lots):>12.2f}"
+        f"{sum(lot.delinquent_assessment for lot in billable_lots):>12.2f}"
+        f"{sum(lot.delinquent_interest for lot in billable_lots):>12.2f}"
+        f"{sum(lot.current_assessment for lot in billable_lots):>12.2f}"
+        f"{sum(lot.current_interest for lot in billable_lots):>12.2f}"
         f"{due_total:>12.2f}"
     )
     lines = [
@@ -217,12 +240,14 @@ def render_notice_pdf(
         note_y = 0.45 * 72
         pdf.setFont("Courier", 12)
         if collection_note:
-            pdf.drawString(
-                0.45 * 72,
-                note_y,
-                'Lots marked with "**" are in collection / county-taken status and need special follow-up language.',
-            )
-            note_y -= 12
+            for warning_line in [
+                'LOTS MARKED WITH "**" ARE NO LONGER OWNED BY YOU.',
+                "THEY HAVE BEEN TAKEN OVER BY LAFAYETTE COUNTY FOR NON-PAYMENT OF TAXES.",
+                "CONTACT LAFAYETTE COUNTY OFFICES IF YOU WANT TO RECLAIM THIS PROPERTY.",
+                "ASSESSMENTS ON THESE LOTS ARE NOT OWED UNLESS YOU RECLAIM THE PROPERTY.",
+            ]:
+                pdf.drawString(0.45 * 72, note_y, warning_line)
+                note_y -= 12
         if has_freeze:
             pdf.drawString(
                 0.45 * 72,

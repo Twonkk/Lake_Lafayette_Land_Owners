@@ -6,8 +6,11 @@ from src.services.assessment_service import (
     EXEMPT_OWNER_CODES,
     apply_assessment_run,
     default_assessment_date,
+    default_assessment_period,
     preview_assessment_run,
+    render_assessment_run_pdf,
 )
+from src.runtime import open_with_default_app
 
 
 class AssessmentsFrame(ttk.Frame):
@@ -16,6 +19,9 @@ class AssessmentsFrame(ttk.Frame):
         self.db_path = db_path
         self.amount_var = tk.StringVar()
         self.date_var = tk.StringVar(value=default_assessment_date())
+        default_season, default_year = default_assessment_period(db_path)
+        self.season_var = tk.StringVar(value=default_season)
+        self.year_var = tk.StringVar(value=default_year)
         self.preview_text = None
 
         self.columnconfigure(0, weight=1)
@@ -39,10 +45,14 @@ class AssessmentsFrame(ttk.Frame):
         ttk.Entry(form, textvariable=self.amount_var).grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=8)
         ttk.Label(form, text="Assessment date").grid(row=1, column=0, sticky="w", padx=12, pady=8)
         ttk.Entry(form, textvariable=self.date_var).grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=8)
+        ttk.Label(form, text="Season").grid(row=2, column=0, sticky="w", padx=12, pady=8)
+        ttk.Entry(form, textvariable=self.season_var).grid(row=2, column=1, sticky="ew", padx=(0, 12), pady=8)
+        ttk.Label(form, text="Assessment year").grid(row=3, column=0, sticky="w", padx=12, pady=8)
+        ttk.Entry(form, textvariable=self.year_var).grid(row=3, column=1, sticky="ew", padx=(0, 12), pady=8)
         ttk.Label(
             form,
             text=f"Exempt owner codes: {', '.join(sorted(EXEMPT_OWNER_CODES))}",
-        ).grid(row=2, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 10))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 10))
 
         actions = ttk.Frame(self, style="App.TFrame")
         actions.grid(row=2, column=0, sticky="ew", pady=(0, 12))
@@ -100,6 +110,7 @@ class AssessmentsFrame(ttk.Frame):
                 [
                     f"Assessment amount: ${preview.assessment_amount:,.2f}",
                     f"Assessment date: {self.date_var.get().strip()}",
+                    f"Assessment period: {self.season_var.get().strip()} {self.year_var.get().strip()}".strip(),
                     "",
                     f"Eligible lots: {preview.eligible_lots}",
                     f"Exempt lots: {preview.exempt_lots}",
@@ -136,10 +147,27 @@ class AssessmentsFrame(ttk.Frame):
         if not confirm:
             return
         try:
-            result = apply_assessment_run(self.db_path, amount, self.date_var.get().strip())
+            result = apply_assessment_run(
+                self.db_path, amount, self.date_var.get().strip(),
+                self.season_var.get().strip(), self.year_var.get().strip(),
+            )
         except Exception as exc:
             messagebox.showerror("Assessment update failed", str(exc))
             return
+
+        report = None
+        report_error = ""
+        try:
+            report = render_assessment_run_pdf(
+                self.db_path, result.run_id, self.db_path.parent / "generated_reports"
+            )
+            open_with_default_app(report)
+        except Exception as exc:
+            report_error = str(exc)
+            messagebox.showwarning(
+                "Assessment saved; report could not open",
+                f"The assessment update completed successfully.\n\nReport issue: {exc}",
+            )
 
         self._set_preview(
             "\n".join(
@@ -150,6 +178,8 @@ class AssessmentsFrame(ttk.Frame):
                     f"Exempt lots: {result.exempt_lots}",
                     f"Freeze lots: {result.freeze_lots}",
                     f"Backup: {result.backup_path}",
+                    f"Report: {report or 'not created'}",
+                    *( [f"Report issue: {report_error}"] if report_error else [] ),
                 ]
             )
         )

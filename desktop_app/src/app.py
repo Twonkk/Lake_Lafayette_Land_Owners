@@ -278,7 +278,11 @@ class LakeLotApp(tk.Tk):
         self._set_screen("Owners and Lots", lambda parent: OwnerLotFrame(parent, self.db_path), help_key="owners_lots")
 
     def show_payments(self) -> None:
-        self._set_screen("Payments", lambda parent: PaymentsFrame(parent, self.db_path), help_key="payments")
+        self._set_screen(
+            "Payments",
+            lambda parent: PaymentsFrame(parent, self.db_path, self.show_cards_stickers),
+            help_key="payments",
+        )
 
     def show_payment_history(self) -> None:
         self._set_screen(
@@ -370,6 +374,7 @@ class LakeLotApp(tk.Tk):
                     f"Database: {self.db_path}",
                     f"Source folder: {source_dir}",
                     f"Owners: {result.owners_imported}",
+                    f"Owner codes needing review: {result.placeholder_owners_imported}",
                     f"Lots: {result.lots_imported}",
                     f"Owner payments: {result.owner_payments_imported}",
                     f"Lot payments: {result.lot_payments_imported}",

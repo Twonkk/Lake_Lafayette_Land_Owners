@@ -7,9 +7,10 @@ from src.runtime import open_with_default_app
 from src.services.notice_service import (
     build_notice_batches,
     build_notice_file_stem,
+    default_notice_season_label,
     notice_query_for_mode,
     owner_display_name,
-    owner_has_collection_lots,
+    owner_has_county_land_trust_lots,
     owner_notice_total,
     render_notice_pdf,
     render_notice_batch_pdfs,
@@ -21,9 +22,11 @@ class NoticesFrame(ttk.Frame):
     def __init__(self, parent: tk.Misc, db_path: Path) -> None:
         super().__init__(parent, style="App.TFrame")
         self.repository = NoticeRepository(db_path)
+        self.db_path = db_path
         self.search_var = tk.StringVar()
         self.batch_size_var = tk.StringVar(value="100")
         self.mode_var = tk.StringVar(value="all")
+        self.season_var = tk.StringVar(value=default_notice_season_label(db_path))
         self.notice_owners = []
         self.filtered_owners = []
         self.output_dir = db_path.parent / "generated_notices"
@@ -71,6 +74,12 @@ class NoticesFrame(ttk.Frame):
 
         ttk.Button(controls, text="Refresh", command=self.refresh_candidates).grid(
             row=0, column=6, sticky="w"
+        )
+        ttk.Label(controls, text="Assessment season / year").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0)
+        )
+        ttk.Entry(controls, textvariable=self.season_var).grid(
+            row=1, column=1, columnspan=3, sticky="ew", padx=(0, 12), pady=(8, 0)
         )
 
         split = ttk.Panedwindow(self, orient="horizontal")
@@ -227,7 +236,7 @@ class NoticesFrame(ttk.Frame):
         has_freeze = any(lot.freeze_flag == "Y" for lot in owner.lots)
         for lot in owner.lots:
             total_display = lot.current_assessment if has_freeze else lot.total_due
-            marker = "**" if owner_has_collection_lots(owner) and lot.collection_flag == "Y" else ""
+            marker = "**" if lot.county_land_trust_flag == "Y" else ""
             lines.append(
                 f"  {lot.lot_number} {marker} delinquent ${lot.delinquent_assessment:,.2f} "
                 f"interest ${lot.delinquent_interest + lot.current_interest:,.2f} "
@@ -237,9 +246,9 @@ class NoticesFrame(ttk.Frame):
         if has_freeze:
             lines.append("")
             lines.append("Freeze note: This owner has a freeze on at least one lot. Legacy notices show the current assessment total in that case.")
-        if owner_has_collection_lots(owner):
+        if owner_has_county_land_trust_lots(owner):
             lines.append("")
-            lines.append("Collection note: Lots marked with ** are in collection / county-taken status and need the special warning text from the legacy notices.")
+            lines.append("County land-trust note: Lots marked with ** are excluded from the amount to remit.")
 
         self._set_preview("\n".join(lines))
 
@@ -250,7 +259,7 @@ class NoticesFrame(ttk.Frame):
         self.preview_text.configure(state="disabled")
 
     def _season_label(self) -> str:
-        return "Temporary Notice Layout"
+        return self.season_var.get().strip() or default_notice_season_label(self.db_path)
 
     def _open_created_file(self, path: Path, title: str, detail_lines: list[str]) -> None:
         try:

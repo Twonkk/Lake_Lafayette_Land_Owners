@@ -80,7 +80,7 @@ class OwnerRepository:
                     delinquent_interest,
                     current_interest,
                     lien_flag,
-                    collection_flag,
+                    county_land_trust_flag,
                     freeze_flag,
                     paid_through,
                     development_status,
@@ -349,7 +349,7 @@ class NoticeRepository:
                 l.current_assessment,
                 l.current_interest,
                 l.total_due,
-                l.collection_flag,
+                l.county_land_trust_flag,
                 l.freeze_flag
             FROM owners o
             LEFT JOIN lots l ON l.owner_code = o.owner_code
@@ -393,7 +393,7 @@ class NoticeRepository:
                         current_assessment=float(row["current_assessment"] or 0),
                         current_interest=float(row["current_interest"] or 0),
                         total_due=float(row["total_due"] or 0),
-                        collection_flag=row["collection_flag"] or "",
+                        county_land_trust_flag=row["county_land_trust_flag"] or "",
                         freeze_flag=row["freeze_flag"] or "",
                     )
                 )
@@ -424,6 +424,26 @@ class FinancialRepository:
                 """
             ).fetchall()
         return [str(row["fiscal_year"]) for row in rows]
+
+    def search_transactions(self, query: str, limit: int = 1000) -> list[dict]:
+        term = f"%{query.strip()}%" if query.strip() else "%"
+        with get_connection(self.db_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT t.*, a.account_name
+                FROM financial_transactions t
+                LEFT JOIN financial_accounts a ON a.account_code = t.account_code
+                WHERE t.transaction_number LIKE ? OR t.transaction_date LIKE ?
+                   OR t.entry_date LIKE ? OR t.account_code LIKE ?
+                   OR t.source_account_code LIKE ? OR t.destination_account_code LIKE ?
+                   OR t.payee LIKE ? OR t.memo LIKE ? OR a.account_name LIKE ?
+                ORDER BY t.fiscal_year DESC, t.month_number DESC,
+                         CAST(t.transaction_number AS INTEGER) DESC, t.id DESC
+                LIMIT ?
+                """,
+                [term, term, term, term, term, term, term, term, term, limit],
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def list_month_accounts(self, fiscal_month: int, fiscal_year: str) -> list[dict]:
         with get_connection(self.db_path) as connection:
@@ -460,6 +480,18 @@ class FinancialRepository:
                 ORDER BY CAST(transaction_number AS INTEGER), id
                 """,
                 [fiscal_month, fiscal_year],
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_account_months(self, account_code: str, fiscal_year: str) -> list[dict]:
+        with get_connection(self.db_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM financial_monthly
+                WHERE account_code = ? AND COALESCE(fiscal_year, '') = ?
+                ORDER BY fiscal_month
+                """,
+                [account_code.strip().upper(), fiscal_year.strip()],
             ).fetchall()
         return [dict(row) for row in rows]
 

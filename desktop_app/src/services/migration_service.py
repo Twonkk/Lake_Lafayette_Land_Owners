@@ -42,6 +42,7 @@ def reconcile_migration(db_path: Path) -> MigrationReconciliation:
                     SELECT o.owner_code
                     FROM owners o
                     LEFT JOIN lots l ON l.owner_code = o.owner_code
+                    WHERE UPPER(TRIM(COALESCE(o.current_flag, ''))) IN ('T', 'Y', 'TRUE')
                     GROUP BY o.owner_code, o.number_lots
                     HAVING COALESCE(o.number_lots, 0) <> COUNT(l.lot_number)
                 )

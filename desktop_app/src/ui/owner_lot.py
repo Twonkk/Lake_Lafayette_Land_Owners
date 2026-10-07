@@ -5,8 +5,12 @@ from tkinter import messagebox, ttk
 from src.db.repositories import OwnerRepository
 from src.services.owner_lot_service import (
     LotUpdateRequest,
+    NewLotRequest,
+    NewOwnerRequest,
     OwnerUpdateRequest,
     add_owner_note,
+    create_lot_record,
+    create_owner_record,
     update_lot_record,
     update_owner_record,
 )
@@ -52,7 +56,7 @@ class OwnerLotFrame(ttk.Frame):
             "lakefront_flag": tk.StringVar(),
             "dock_flag": tk.StringVar(),
             "lien_flag": tk.StringVar(),
-            "collection_flag": tk.StringVar(),
+            "county_land_trust_flag": tk.StringVar(),
             "appraised_value": tk.StringVar(),
             "assessed_value": tk.StringVar(),
             "previous_review_date": tk.StringVar(),
@@ -75,7 +79,9 @@ class OwnerLotFrame(ttk.Frame):
         entry = ttk.Entry(search_row, textvariable=self.search_var)
         entry.grid(row=0, column=1, sticky="ew", padx=(0, 12))
         entry.bind("<Return>", self.run_search)
-        ttk.Button(search_row, text="Search", command=self.run_search).grid(row=0, column=2, sticky="ew")
+        ttk.Button(search_row, text="Search", command=self.run_search).grid(row=0, column=2, sticky="ew", padx=(0, 8))
+        ttk.Button(search_row, text="Add Owner", command=self.show_add_owner).grid(row=0, column=3, sticky="ew", padx=(0, 8))
+        ttk.Button(search_row, text="Add Lot", command=self.show_add_lot).grid(row=0, column=4, sticky="ew")
 
         split = ttk.Panedwindow(self, orient="horizontal")
         split.grid(row=1, column=0, sticky="nsew")
@@ -163,7 +169,7 @@ class OwnerLotFrame(ttk.Frame):
         ttk.Label(parent, text="Lots for selected owner", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
         self.lot_tree = ttk.Treeview(
             parent,
-            columns=("lot_number", "due", "freeze", "lien", "collection"),
+            columns=("lot_number", "due", "freeze", "lien", "county_trust"),
             show="headings",
             height=8,
         )
@@ -172,7 +178,7 @@ class OwnerLotFrame(ttk.Frame):
             ("due", "Balance", 90),
             ("freeze", "Freeze", 60),
             ("lien", "Lien", 60),
-            ("collection", "Collection", 80),
+            ("county_trust", "County Trust", 95),
         ]:
             self.lot_tree.heading(name, text=text)
             self.lot_tree.column(name, width=width, anchor="center")
@@ -196,7 +202,7 @@ class OwnerLotFrame(ttk.Frame):
             ("Lakefront", "lakefront_flag", False),
             ("Dock", "dock_flag", False),
             ("Lien", "lien_flag", True),
-            ("Collection", "collection_flag", True),
+            ("County land trust", "county_land_trust_flag", True),
             ("Appraised", "appraised_value", False),
             ("Assessed", "assessed_value", False),
             ("Prev review", "previous_review_date", False),
@@ -356,7 +362,7 @@ class OwnerLotFrame(ttk.Frame):
                     f"${float(lot['total_due'] or 0):,.2f}",
                     lot["freeze_flag"] or "",
                     lot["lien_flag"] or "",
-                    lot["collection_flag"] or "",
+                    lot["county_land_trust_flag"] or "",
                 ),
             )
         lot_children = self.lot_tree.get_children()
@@ -428,7 +434,7 @@ class OwnerLotFrame(ttk.Frame):
         self.lot_vars["lakefront_flag"].set(lot["lakefront_flag"] or "")
         self.lot_vars["dock_flag"].set(lot["dock_flag"] or "")
         self.lot_vars["lien_flag"].set(lot["lien_flag"] or "")
-        self.lot_vars["collection_flag"].set(lot["collection_flag"] or "")
+        self.lot_vars["county_land_trust_flag"].set(lot["county_land_trust_flag"] or "")
         self.lot_vars["appraised_value"].set(f"{float(lot['appraised_value'] or 0):,.2f}")
         self.lot_vars["assessed_value"].set(f"{float(lot['assessed_value'] or 0):,.2f}")
         self.lot_vars["previous_review_date"].set(lot["previous_review_date"] or "")
@@ -529,3 +535,90 @@ class OwnerLotFrame(ttk.Frame):
             if current_lot and current_lot in self.lot_tree.get_children():
                 self.lot_tree.selection_set(current_lot)
                 self._on_select_lot()
+
+    def _entry_dialog(self, title: str, fields: list[tuple[str, str]], on_save) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title(title)
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=16)
+        frame.grid(row=0, column=0, sticky="nsew")
+        frame.columnconfigure(1, weight=1)
+        variables: dict[str, tk.StringVar] = {}
+        for row, (key, label) in enumerate(fields):
+            ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=5)
+            variable = tk.StringVar()
+            variables[key] = variable
+            ttk.Entry(frame, textvariable=variable, width=32).grid(row=row, column=1, sticky="ew", pady=5)
+
+        def save() -> None:
+            if on_save({key: variable.get() for key, variable in variables.items()}):
+                dialog.destroy()
+
+        ttk.Button(frame, text="Save", command=save).grid(
+            row=len(fields), column=0, columnspan=2, sticky="ew", pady=(12, 0)
+        )
+
+    def show_add_owner(self) -> None:
+        fields = [
+            ("owner_code", "Owner code"), ("last_name", "Last name"),
+            ("first_name", "First name"), ("address", "Address"),
+            ("city", "City"), ("state", "State"), ("zip_code", "ZIP"),
+            ("phone", "Phone"), ("resident_flag", "Resident Y/N"),
+        ]
+
+        def save(values: dict[str, str]) -> bool:
+            try:
+                create_owner_record(self.db_path, NewOwnerRequest(**values))
+            except Exception as exc:
+                messagebox.showerror("Add owner failed", str(exc))
+                return False
+            self.search_var.set(values["owner_code"])
+            self.run_search()
+            messagebox.showinfo("Owner added", f"Owner {values['owner_code']} was created.")
+            return True
+
+        self._entry_dialog("Add New Owner", fields, save)
+
+    def show_add_lot(self) -> None:
+        if not self.selected_owner_code:
+            messagebox.showerror("Missing owner", "Select the owner who will receive the new lot.")
+            return
+        fields = [
+            ("lot_number", "Lot number"), ("current_assessment", "Current assessment"),
+            ("delinquent_assessment", "Delinquent assessment"),
+            ("delinquent_interest", "Delinquent interest"),
+            ("current_interest", "Current interest"), ("paid_through", "Paid through"),
+            ("development_status", "Development status"), ("freeze_flag", "Freeze Y/N"),
+            ("lakefront_flag", "Lakefront Y/N"), ("dock_flag", "Dock Y/N"),
+            ("county_land_trust_flag", "County land trust Y/N"),
+            ("appraised_value", "Appraised value"), ("assessed_value", "Assessed value"),
+        ]
+
+        def save(values: dict[str, str]) -> bool:
+            try:
+                request = NewLotRequest(
+                    owner_code=self.selected_owner_code or "",
+                    lot_number=values["lot_number"],
+                    current_assessment=float(values["current_assessment"] or 0),
+                    delinquent_assessment=float(values["delinquent_assessment"] or 0),
+                    delinquent_interest=float(values["delinquent_interest"] or 0),
+                    current_interest=float(values["current_interest"] or 0),
+                    paid_through=values["paid_through"],
+                    development_status=values["development_status"] or "V",
+                    freeze_flag=values["freeze_flag"] or "N",
+                    lakefront_flag=values["lakefront_flag"] or "N",
+                    dock_flag=values["dock_flag"] or "N",
+                    county_land_trust_flag=values["county_land_trust_flag"] or "N",
+                    appraised_value=float(values["appraised_value"] or 0),
+                    assessed_value=float(values["assessed_value"] or 0),
+                )
+                create_lot_record(self.db_path, request)
+            except Exception as exc:
+                messagebox.showerror("Add lot failed", str(exc))
+                return False
+            self._refresh_selected_owner()
+            messagebox.showinfo("Lot added", f"Lot {values['lot_number'].upper()} was created.")
+            return True
+
+        self._entry_dialog("Add Lot to Selected Owner", fields, save)
