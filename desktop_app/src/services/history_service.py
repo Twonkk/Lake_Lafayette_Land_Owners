@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from html import escape
 from pathlib import Path
+import re
+
+from reportlab.lib.units import inch
 
 from src.db.connection import get_connection
 from src.services.pdf_service import build_pdf_path, build_report_story, build_story_pdf, build_table
+from src.services.payment_service import payment_form_label
 
 
 def _search_term(query: str) -> str:
@@ -117,3 +122,113 @@ def render_history_pdf(
         table_rows.append(["No matching records.", *([""] * (len(headings) - 1))])
     story.append(build_table(table_rows))
     return build_story_pdf(output_path, story, title=title)
+
+
+def get_owner_payment_history(db_path: Path, owner_code: str) -> dict:
+    """Return one owner's current identity and complete owner-level payment history."""
+    normalized_code = owner_code.strip()
+    if not normalized_code:
+        raise ValueError("An owner code is required.")
+
+    with get_connection(db_path) as connection:
+        owner_row = connection.execute(
+            """
+            SELECT owner_code, last_name, first_name, address, city, state, zip, total_owed
+            FROM owners
+            WHERE owner_code = ?
+            """,
+            [normalized_code],
+        ).fetchone()
+        lot_rows = connection.execute(
+            """
+            SELECT lot_number
+            FROM lots
+            WHERE owner_code = ?
+            ORDER BY lot_number
+            """,
+            [normalized_code],
+        ).fetchall()
+        payment_rows = connection.execute(
+            """
+            SELECT id, payment_date, total_owed, payment_amount, payment_form, check_number
+            FROM owner_payments
+            WHERE owner_code = ?
+            ORDER BY payment_date DESC, id DESC
+            """,
+            [normalized_code],
+        ).fetchall()
+
+    owner = dict(owner_row) if owner_row is not None else {
+        "owner_code": normalized_code,
+        "last_name": "",
+        "first_name": "",
+        "address": "",
+        "city": "",
+        "state": "",
+        "zip": "",
+        "total_owed": 0,
+    }
+    return {
+        "owner": owner,
+        "lot_numbers": [row["lot_number"] for row in lot_rows],
+        "payments": [dict(row) for row in payment_rows],
+    }
+
+
+def render_owner_payment_history_pdf(db_path: Path, output_dir: Path, owner_code: str) -> Path:
+    """Create a printable PDF limited to one owner's complete payment history."""
+    detail = get_owner_payment_history(db_path, owner_code)
+    owner = detail["owner"]
+    payments = detail["payments"]
+
+    name = " ".join(
+        part for part in [owner.get("first_name") or "", owner.get("last_name") or ""] if part
+    ).strip() or "Name unavailable"
+    city_line = " ".join(
+        part for part in [owner.get("city") or "", owner.get("state") or "", owner.get("zip") or ""] if part
+    ).strip()
+    address = ", ".join(
+        part for part in [owner.get("address") or "", city_line] if part
+    ) or "Not available"
+    lots = ", ".join(detail["lot_numbers"]) or "None listed"
+    total_paid = sum(float(row["payment_amount"] or 0) for row in payments)
+
+    safe_code = re.sub(r"[^A-Za-z0-9_-]+", "_", str(owner["owner_code"])).strip("_") or "owner"
+    output_path = build_pdf_path(output_dir, f"owner_{safe_code}_payment_history")
+    story = build_report_story(
+        "Individual Payment History",
+        [
+            f"<b>Owner:</b> {escape(str(owner['owner_code']))} - {escape(name)}",
+            f"<b>Mailing address:</b> {escape(address)}",
+            f"<b>Current lots:</b> {escape(lots)}",
+            (
+                f"<b>Payment records:</b> {len(payments):,} &nbsp;&nbsp; "
+                f"<b>Total recorded payments:</b> ${total_paid:,.2f} &nbsp;&nbsp; "
+                f"<b>Current balance:</b> ${float(owner.get('total_owed') or 0):,.2f}"
+            ),
+        ],
+    )
+    rows = [
+        [
+            row["payment_date"] or "",
+            f"${float(row['total_owed'] or 0):,.2f}",
+            f"${float(row['payment_amount'] or 0):,.2f}",
+            payment_form_label(row["payment_form"]),
+            row["check_number"] or "",
+        ]
+        for row in payments
+    ]
+    if not rows:
+        rows.append(["No payment history found.", "", "", "", ""])
+    story.append(
+        build_table(
+            [["Date", "Owed Before", "Paid", "Payment Form", "Check / Reference"], *rows],
+            [0.9 * inch, 1.05 * inch, 0.95 * inch, 1.75 * inch, 1.75 * inch],
+        )
+    )
+    return build_story_pdf(
+        output_path,
+        story,
+        title=f"Payment History - Owner {owner['owner_code']}",
+        footer_text="Lake Lafayette Landowners Association - Individual Payment History",
+    )

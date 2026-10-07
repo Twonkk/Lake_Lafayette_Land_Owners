@@ -68,6 +68,7 @@ def build_story_pdf(
     right_margin: float = 0.55 * inch,
     top_margin: float = 0.6 * inch,
     bottom_margin: float = 0.55 * inch,
+    footer_text: str | None = None,
 ) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     document = SimpleDocTemplate(
@@ -80,7 +81,22 @@ def build_story_pdf(
         title=title or output_path.stem,
         author=author,
     )
-    document.build(story)
+    if footer_text:
+        def draw_footer(pdf_canvas, _document) -> None:
+            pdf_canvas.saveState()
+            pdf_canvas.setFillColor(colors.HexColor("#5f6b7a"))
+            pdf_canvas.setFont("Helvetica", 8)
+            pdf_canvas.drawString(document.leftMargin, 0.3 * inch, footer_text)
+            pdf_canvas.drawRightString(
+                LETTER[0] - document.rightMargin,
+                0.3 * inch,
+                f"Page {pdf_canvas.getPageNumber()}",
+            )
+            pdf_canvas.restoreState()
+
+        document.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
+    else:
+        document.build(story)
     return output_path
 
 

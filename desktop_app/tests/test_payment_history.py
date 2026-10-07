@@ -4,6 +4,7 @@ from pathlib import Path
 
 from src.db.connection import get_connection, initialize_database
 from src.db.repositories import OwnerRepository, PaymentRepository
+from src.services.history_service import get_owner_payment_history, render_owner_payment_history_pdf
 from src.services.payment_service import payment_form_label
 
 
@@ -97,6 +98,40 @@ class PaymentHistoryTests(unittest.TestCase):
         self.assertEqual(payment_form_label("CK"), "Check")
         self.assertEqual(payment_form_label("8"), "Negotiated Adjustment")
         self.assertEqual(payment_form_label("custom"), "CUSTOM")
+
+    def test_individual_history_is_limited_to_selected_owner(self) -> None:
+        with get_connection(self.db_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO owners (owner_code, last_name, first_name, total_owed)
+                VALUES ('2002', 'Other', 'Owner', 10)
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO owner_payments (
+                    owner_code, payment_amount, total_owed, payment_date, payment_form, check_number
+                ) VALUES ('2002', 10, 20, '2026-07-01', 'CS', '')
+                """
+            )
+
+        detail = get_owner_payment_history(self.db_path, "1001")
+
+        self.assertEqual(detail["owner"]["last_name"], "Martin")
+        self.assertEqual(detail["lot_numbers"], ["A1", "A2"])
+        self.assertEqual(len(detail["payments"]), 2)
+        self.assertTrue(all(row["payment_amount"] != 10 for row in detail["payments"]))
+
+    def test_individual_history_pdf_is_created(self) -> None:
+        output = render_owner_payment_history_pdf(
+            self.db_path,
+            Path(self.temp_dir.name) / "reports",
+            "1001",
+        )
+
+        self.assertEqual(output.name, "owner_1001_payment_history.pdf")
+        self.assertTrue(output.exists())
+        self.assertTrue(output.read_bytes().startswith(b"%PDF"))
 
 
 if __name__ == "__main__":

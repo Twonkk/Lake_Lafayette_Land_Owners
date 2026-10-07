@@ -3,6 +3,8 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from src.db.repositories import OwnerRepository
+from src.runtime import open_with_default_app
+from src.services.history_service import render_owner_payment_history_pdf
 from src.services.owner_lot_service import (
     LotUpdateRequest,
     NewLotRequest,
@@ -255,7 +257,7 @@ class OwnerLotFrame(ttk.Frame):
 
     def _build_payment_history_tab(self, parent: ttk.Frame) -> None:
         parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(2, weight=1)
+        parent.rowconfigure(3, weight=1)
 
         ttk.Label(
             parent,
@@ -265,6 +267,11 @@ class OwnerLotFrame(ttk.Frame):
         ttk.Label(parent, textvariable=self.payment_history_summary_var).grid(
             row=1, column=0, sticky="w", pady=(0, 8)
         )
+        ttk.Button(
+            parent,
+            text="Open This Owner's History PDF",
+            command=self.open_owner_payment_history_pdf,
+        ).grid(row=2, column=0, sticky="w", pady=(0, 8))
 
         self.payment_history_tree = ttk.Treeview(
             parent,
@@ -280,20 +287,34 @@ class OwnerLotFrame(ttk.Frame):
         ]:
             self.payment_history_tree.heading(name, text=heading)
             self.payment_history_tree.column(name, width=width, anchor=anchor)
-        self.payment_history_tree.grid(row=2, column=0, sticky="nsew")
+        self.payment_history_tree.grid(row=3, column=0, sticky="nsew")
 
         vertical_scroll = ttk.Scrollbar(
             parent, orient="vertical", command=self.payment_history_tree.yview
         )
-        vertical_scroll.grid(row=2, column=1, sticky="ns")
+        vertical_scroll.grid(row=3, column=1, sticky="ns")
         horizontal_scroll = ttk.Scrollbar(
             parent, orient="horizontal", command=self.payment_history_tree.xview
         )
-        horizontal_scroll.grid(row=3, column=0, sticky="ew")
+        horizontal_scroll.grid(row=4, column=0, sticky="ew")
         self.payment_history_tree.configure(
             yscrollcommand=vertical_scroll.set,
             xscrollcommand=horizontal_scroll.set,
         )
+
+    def open_owner_payment_history_pdf(self) -> None:
+        if not self.selected_owner_code:
+            messagebox.showinfo("Select an owner", "Select an owner before creating the history PDF.")
+            return
+        try:
+            output = render_owner_payment_history_pdf(
+                self.db_path,
+                self.db_path.parent / "generated_reports",
+                self.selected_owner_code,
+            )
+            open_with_default_app(output)
+        except Exception as exc:
+            messagebox.showerror("History PDF failed", str(exc))
 
     def run_search(self, _event: object | None = None) -> None:
         self.results = self.repository.search(self.search_var.get())

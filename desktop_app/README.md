@@ -62,6 +62,7 @@ to confirm the PDF runtime is available before testing notice/report printing.
 - connects every main Help panel to the dBase option it replaces
 - provides owner/lot search and the primary daily workflows after import
 - includes owner/lot/property/ID/boat history, migration-readiness checks, and client-review PDFs
+- creates a complete individual payment-history PDF from either the History screen or an owner's Payment History tab
 - keeps county land trust status separate from collection-agency status
 - posts balanced financial transactions with searchable history and auditable recoding
 

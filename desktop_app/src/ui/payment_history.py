@@ -5,6 +5,7 @@ from tkinter import messagebox, ttk
 from src.db.repositories import PaymentRepository
 from src.runtime import open_with_default_app
 from src.services.history_service import (
+    render_owner_payment_history_pdf,
     render_history_pdf,
     search_id_boat_history,
     search_lot_payment_history,
@@ -23,7 +24,7 @@ class PaymentHistoryFrame(ttk.Frame):
         self.search_var = tk.StringVar()
         self.current_rows: list[dict] = []
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(3, weight=1)
         self._build()
         self.run_search()
 
@@ -40,11 +41,17 @@ class PaymentHistoryFrame(ttk.Frame):
         entry = ttk.Entry(search_row, textvariable=self.search_var)
         entry.grid(row=0, column=1, sticky="ew", padx=(0, 8))
         entry.bind("<Return>", self.run_search)
-        ttk.Button(search_row, text="Search", command=self.run_search).grid(row=0, column=2, padx=(0, 8))
-        ttk.Button(search_row, text="Open Current History PDF", command=self.open_pdf).grid(row=0, column=3)
+        ttk.Button(search_row, text="Search", command=self.run_search).grid(row=0, column=2)
+
+        pdf_actions = ttk.Frame(self, style="App.TFrame")
+        pdf_actions.grid(row=2, column=0, sticky="w", pady=(0, 12))
+        ttk.Button(pdf_actions, text="PDF for Selected Owner", command=self.open_selected_owner_pdf).grid(
+            row=0, column=0, padx=(0, 8)
+        )
+        ttk.Button(pdf_actions, text="PDF for Current Results", command=self.open_pdf).grid(row=0, column=1)
 
         self.notebook = ttk.Notebook(self)
-        self.notebook.grid(row=2, column=0, sticky="nsew")
+        self.notebook.grid(row=3, column=0, sticky="nsew")
         self.notebook.bind("<<NotebookTabChanged>>", self.run_search)
 
         tabs = [ttk.Frame(self.notebook, style="App.TFrame", padding=10) for _ in range(4)]
@@ -203,6 +210,34 @@ class PaymentHistoryFrame(ttk.Frame):
         rows = [list(tree.item(item, "values")) for item in tree.get_children()]
         try:
             output = render_history_pdf(self.db_path.parent / "generated_reports", titles[index], headings, rows)
+            open_with_default_app(output)
+        except Exception as exc:
+            messagebox.showerror("History PDF failed", str(exc))
+
+    def open_selected_owner_pdf(self) -> None:
+        if self._active_index() != 0:
+            messagebox.showinfo(
+                "Choose an owner payment",
+                "Open the Owner Payments tab, then click any payment for the owner you want to print.",
+            )
+            return
+        selected = self.owner_tree.selection()
+        if not selected:
+            messagebox.showinfo(
+                "Choose an owner payment",
+                "Click any payment for the owner you want, then choose PDF for Selected Owner.",
+            )
+            return
+        payment = self.repository.get_history_detail(int(selected[0]))
+        if payment is None:
+            messagebox.showerror("History PDF failed", "The selected payment could not be found.")
+            return
+        try:
+            output = render_owner_payment_history_pdf(
+                self.db_path,
+                self.db_path.parent / "generated_reports",
+                payment["owner_code"],
+            )
             open_with_default_app(output)
         except Exception as exc:
             messagebox.showerror("History PDF failed", str(exc))

@@ -43,6 +43,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
         actions=(
             "Search by owner name, owner code, or lot number.",
             "Open Payment History to see this owner's imported dBase and new-app payments.",
+            "Open This Owner's History PDF creates a printable payment history for only the selected owner.",
             "Save Owner Changes updates the owner contact and status fields.",
             "Save Lot Changes updates the selected lot detail fields.",
             "Save Note adds a new note to the selected owner record.",
@@ -87,6 +88,8 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
         actions=(
             "Search by owner name, owner code, payment date, form, or check/reference number.",
             "Select a payment to review the owner's owed amount, amount paid, and resulting balance.",
+            "PDF for Selected Owner prints the complete payment history for only that owner.",
+            "PDF for Current Results prints the rows shown on the active history tab.",
             "Payments recorded in this app also show the distribution across the owner's lots.",
         ),
         legacy_reference="In dBase: Group 1, option 10 — Display History Records.",
