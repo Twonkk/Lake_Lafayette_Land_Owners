@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from html import escape
 from pathlib import Path
 import shutil
 
+from reportlab.lib.units import inch
+
 from src.db.connection import get_connection
-from src.services.pdf_service import build_pdf_path, write_preformatted_pages_pdf
+from src.services.pdf_service import build_pdf_path, build_report_story, build_story_pdf, build_table
 
 
 @dataclass(slots=True)
@@ -326,19 +329,38 @@ def render_encumbrance_history_pdf(db_path: Path, owner_code: str, output_dir: P
             [owner_code.strip()],
         ).fetchone()
     name = " ".join(part for part in [owner["first_name"], owner["last_name"]] if part) if owner else ""
-    lines = [
-        "LIEN AND COLLECTION CHANGE LOG",
-        f"OWNER: {owner_code} {name}".strip(),
-        "",
-        "DATE        TYPE                ACTION      LOT      AMOUNT      BOOK / PAGE",
-        "----------  ------------------  ----------  -------  ----------  -----------",
-    ]
+    rows: list[list[object]] = [["Date", "Type", "Action", "Lot", "Amount", "Book / Page"]]
     for event in events:
-        lines.append(
-            f"{str(event['action_date'] or ''):<10}  {str(event['event_type'] or '')[:18]:<18}  "
-            f"{str(event['action'] or '')[:10]:<10}  {str(event['lot_number'] or ''):<7}  "
-            f"{float(event['amount'] or 0):>10.2f}  "
-            f"{str(event['book'] or '')} {str(event['page'] or '')}".rstrip()
+        rows.append(
+            [
+                str(event["action_date"] or ""),
+                str(event["event_type"] or ""),
+                str(event["action"] or ""),
+                str(event["lot_number"] or ""),
+                f"${float(event['amount'] or 0):,.2f}",
+                f"{str(event['book'] or '')} {str(event['page'] or '')}".strip(),
+            ]
         )
+    story = build_report_story(
+        "Lien and Collection Change Log",
+        [
+            f"<b>Owner:</b> {escape(f'{owner_code} {name}'.strip())}",
+            f"<b>Events:</b> {len(events):,}",
+        ],
+    )
+    story.append(
+        build_table(
+            rows,
+            [0.95 * inch, 1.55 * inch, 1.0 * inch, 0.75 * inch, 0.95 * inch, 1.2 * inch],
+            wrap_cells=True,
+            column_alignments=["LEFT", "LEFT", "LEFT", "LEFT", "RIGHT", "LEFT"],
+            font_size=8,
+        )
+    )
     output_path = build_pdf_path(output_dir, f"lien_collection_log_{owner_code}")
-    return write_preformatted_pages_pdf(output_path, [lines], title="Lien and Collection Log")
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Lien and Collection Log",
+        footer_text="Lake Lafayette Landowners Association - Lien and Collection Change Log",
+    )

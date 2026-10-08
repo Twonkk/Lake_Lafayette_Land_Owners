@@ -211,51 +211,93 @@ def render_notice_pdf(
 
     for owner in owners:
         table_lines, due_total, has_freeze, collection_note = _notice_table_lines(owner)
+        table_header = table_lines[:2]
+        lot_rows = table_lines[2:-2]
+        table_total = table_lines[-2:]
         owner_name = owner_display_name(owner).upper()
         owner_address = (owner.address or "").upper()
         owner_city = (owner.city or "").upper()
         owner_state = (owner.state or "").upper()
         city_state_zip = f"{owner_city}    {owner_state}  {owner.zip_code}".strip()
+        first_page_capacity = 18
+        continuation_capacity = 30
+        page_count = 1
+        if len(lot_rows) > first_page_capacity:
+            page_count += (len(lot_rows) - first_page_capacity + continuation_capacity - 1) // continuation_capacity
 
-        pdf.setFont("Courier", 14)
-        top_y = page_height - (0.55 * 72)
-        pdf.drawString(0.45 * 72, top_y, owner_name)
-        pdf.drawString(0.45 * 72, top_y - 18, owner_address)
-        pdf.drawString(0.45 * 72, top_y - 36, city_state_zip)
-        pdf.drawString(4.9 * 72, page_height - (0.58 * 72), owner.owner_code)
-        pdf.drawString(5.55 * 72, page_height - (0.95 * 72), f"Due: $ {due_total:,.2f}")
+        remaining_rows = list(lot_rows)
+        owner_page = 1
+        while owner_page == 1 or remaining_rows:
+            row_capacity = first_page_capacity if owner_page == 1 else continuation_capacity
+            page_rows = remaining_rows[:row_capacity]
+            remaining_rows = remaining_rows[row_capacity:]
+            is_last_page = not remaining_rows
 
-        pdf.setFont("Courier", 13)
-        table_y = page_height - (4.65 * 72)
-        line_step = 15.5
-        for line in table_lines:
-            pdf.drawString(0.22 * 72, table_y, line)
-            table_y -= line_step
+            top_y = page_height - (0.55 * 72)
+            if owner_page == 1:
+                pdf.setFont("Courier", 14)
+                pdf.drawString(0.45 * 72, top_y, owner_name)
+                pdf.drawString(0.45 * 72, top_y - 18, owner_address)
+                pdf.drawString(0.45 * 72, top_y - 36, city_state_zip)
+                table_y = page_height - (4.65 * 72)
+            else:
+                pdf.setFont("Courier-Bold", 13)
+                pdf.drawString(0.45 * 72, top_y, "ASSESSMENT NOTICE - CONTINUED")
+                pdf.setFont("Courier", 11)
+                pdf.drawString(0.45 * 72, top_y - 20, owner_name)
+                table_y = page_height - (1.55 * 72)
 
-        pdf.setFont("Courier", 12)
-        pdf.drawString(0.45 * 72, 1.2 * 72, season_label)
-        pdf.setFont("Courier-Bold", 14)
-        pdf.drawString(0.45 * 72, 0.8 * 72, f"PLEASE REMIT PAYMENT IN THE AMOUNT OF ${due_total:,.2f}")
-
-        note_y = 0.45 * 72
-        pdf.setFont("Courier", 12)
-        if collection_note:
-            for warning_line in [
-                'LOTS MARKED WITH "**" ARE NO LONGER OWNED BY YOU.',
-                "THEY HAVE BEEN TAKEN OVER BY LAFAYETTE COUNTY FOR NON-PAYMENT OF TAXES.",
-                "CONTACT LAFAYETTE COUNTY OFFICES IF YOU WANT TO RECLAIM THIS PROPERTY.",
-                "ASSESSMENTS ON THESE LOTS ARE NOT OWED UNLESS YOU RECLAIM THE PROPERTY.",
-            ]:
-                pdf.drawString(0.45 * 72, note_y, warning_line)
-                note_y -= 12
-        if has_freeze:
-            pdf.drawString(
-                0.45 * 72,
-                note_y,
-                "Freeze note: this notice shows current assessment totals for frozen accounts.",
+            pdf.setFont("Courier", 12)
+            pdf.drawString(4.9 * 72, page_height - (0.58 * 72), owner.owner_code)
+            pdf.drawString(5.55 * 72, page_height - (0.95 * 72), f"Due: $ {due_total:,.2f}")
+            pdf.setFont("Courier", 8)
+            pdf.drawRightString(
+                page_width - (0.45 * 72),
+                page_height - (0.4 * 72),
+                f"Page {owner_page} of {page_count}",
             )
 
-        pdf.showPage()
+            pdf.setFont("Courier", 10.5)
+            line_step = 13.2
+            for line in [*table_header, *page_rows, *(table_total if is_last_page else [])]:
+                pdf.drawString(0.35 * 72, table_y, line)
+                table_y -= line_step
+
+            if not is_last_page:
+                pdf.setFont("Courier-Bold", 10)
+                pdf.drawString(0.45 * 72, max(table_y - 8, 1.1 * 72), "LOT LIST CONTINUES ON NEXT PAGE")
+            else:
+                pdf.setFont("Courier", 10)
+                pdf.drawString(0.45 * 72, 1.7 * 72, season_label)
+                pdf.setFont("Courier-Bold", 12)
+                pdf.drawString(
+                    0.45 * 72,
+                    1.35 * 72,
+                    f"PLEASE REMIT PAYMENT IN THE AMOUNT OF ${due_total:,.2f}",
+                )
+
+                note_lines: list[str] = []
+                if collection_note:
+                    note_lines.extend(
+                        [
+                            'LOTS MARKED WITH "**" ARE NO LONGER OWNED BY YOU.',
+                            "THEY HAVE BEEN TAKEN OVER BY LAFAYETTE COUNTY FOR NON-PAYMENT OF TAXES.",
+                            "CONTACT LAFAYETTE COUNTY OFFICES IF YOU WANT TO RECLAIM THIS PROPERTY.",
+                            "ASSESSMENTS ON THESE LOTS ARE NOT OWED UNLESS YOU RECLAIM THE PROPERTY.",
+                        ]
+                    )
+                if has_freeze:
+                    note_lines.append(
+                        "Freeze note: this notice shows current assessment totals for frozen accounts."
+                    )
+                note_y = 1.0 * 72
+                pdf.setFont("Courier", 8.5)
+                for warning_line in note_lines:
+                    pdf.drawString(0.45 * 72, note_y, warning_line)
+                    note_y -= 9.5
+
+            pdf.showPage()
+            owner_page += 1
 
     pdf.save()
     return output_path

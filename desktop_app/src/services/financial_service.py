@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 
 from reportlab.lib import colors
+from reportlab.lib.pagesizes import LETTER, landscape
 from reportlab.lib.units import inch
 from reportlab.platypus import TableStyle
 
@@ -909,7 +910,10 @@ def render_monthly_financial_report_pdf(
     )
     table = build_table(
         table_rows,
-        [0.55 * inch, 2.1 * inch, 1.0 * inch, 1.0 * inch, 0.95 * inch, 0.95 * inch, 0.95 * inch],
+        [0.55 * inch, 2.15 * inch, 1.15 * inch, 1.15 * inch, 1.1 * inch, 1.1 * inch, 1.1 * inch],
+        wrap_cells=True,
+        column_alignments=["LEFT", "LEFT", "RIGHT", "RIGHT", "RIGHT", "RIGHT", "RIGHT"],
+        font_size=8,
     )
     category_rows = [index for index, row in enumerate(table_rows) if row[1] == "" and index > 0]
     styles = [("ALIGN", (2, 1), (6, -1), "RIGHT")]
@@ -923,7 +927,13 @@ def render_monthly_financial_report_pdf(
         )
     table.setStyle(TableStyle(styles))
     story.append(table)
-    return build_story_pdf(output_path, story, title="Monthly Financial Report")
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Monthly Financial Report",
+        footer_text="Lake Lafayette Landowners Association - Monthly Financial Report",
+        page_size=landscape(LETTER),
+    )
 
 
 def render_transaction_log_pdf(
@@ -989,11 +999,20 @@ def render_transaction_log_pdf(
     )
     table = build_table(
         table_rows,
-        [0.42 * inch, 0.75 * inch, 0.45 * inch, 0.42 * inch, 0.65 * inch, 1.35 * inch, 1.8 * inch, 0.55 * inch, 0.5 * inch],
+        [0.42 * inch, 0.78 * inch, 0.5 * inch, 0.48 * inch, 0.72 * inch, 1.5 * inch, 2.75 * inch, 0.72 * inch, 0.72 * inch],
+        wrap_cells=True,
+        column_alignments=["LEFT", "LEFT", "LEFT", "LEFT", "RIGHT", "LEFT", "LEFT", "LEFT", "LEFT"],
+        font_size=7.5,
     )
     table.setStyle(TableStyle([("ALIGN", (4, 1), (4, -1), "RIGHT")]))
     story.append(table)
-    return build_story_pdf(output_path, story, title="Transaction Log")
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Transaction Log",
+        footer_text="Lake Lafayette Landowners Association - Transaction Log",
+        page_size=landscape(LETTER),
+    )
 
 
 def render_year_end_financial_report_pdf(db_path: Path, fiscal_year: str, output_dir: Path) -> Path:
@@ -1035,7 +1054,12 @@ def render_year_end_financial_report_pdf(db_path: Path, fiscal_year: str, output
         )
 
     story = build_report_story("Year-End Financial Summary", [f"Fiscal year: {fiscal_year}"])
-    table = build_table(table_rows, [0.7 * inch, 3.1 * inch, 1.15 * inch, 1.15 * inch])
+    table = build_table(
+        table_rows,
+        [0.7 * inch, 3.1 * inch, 1.15 * inch, 1.15 * inch],
+        wrap_cells=True,
+        column_alignments=["LEFT", "LEFT", "RIGHT", "RIGHT"],
+    )
     category_rows = [index for index, row in enumerate(table_rows) if row[1] == "" and index > 0]
     styles = [("ALIGN", (2, 1), (3, -1), "RIGHT")]
     for index in category_rows:
@@ -1048,7 +1072,12 @@ def render_year_end_financial_report_pdf(db_path: Path, fiscal_year: str, output
         )
     table.setStyle(TableStyle(styles))
     story.append(table)
-    return build_story_pdf(output_path, story, title="Year-End Financial Summary")
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Year-End Financial Summary",
+        footer_text="Lake Lafayette Landowners Association - Year-End Financial Summary",
+    )
 
 
 def render_budget_report_pdf(db_path: Path, fiscal_year: str, output_dir: Path) -> Path:
@@ -1090,7 +1119,12 @@ def render_budget_report_pdf(db_path: Path, fiscal_year: str, output_dir: Path) 
         )
 
     story = build_report_story("Budget Report", [f"Fiscal year: {fiscal_year}"])
-    table = build_table(table_rows, [0.7 * inch, 3.1 * inch, 1.15 * inch, 1.15 * inch])
+    table = build_table(
+        table_rows,
+        [0.7 * inch, 3.1 * inch, 1.15 * inch, 1.15 * inch],
+        wrap_cells=True,
+        column_alignments=["LEFT", "LEFT", "RIGHT", "RIGHT"],
+    )
     category_rows = [index for index, row in enumerate(table_rows) if row[1] == "" and index > 0]
     styles = [("ALIGN", (2, 1), (3, -1), "RIGHT")]
     for index in category_rows:
@@ -1103,4 +1137,9 @@ def render_budget_report_pdf(db_path: Path, fiscal_year: str, output_dir: Path) 
         )
     table.setStyle(TableStyle(styles))
     story.append(table)
-    return build_story_pdf(output_path, story, title="Budget Report")
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Budget Report",
+        footer_text="Lake Lafayette Landowners Association - Budget Report",
+    )

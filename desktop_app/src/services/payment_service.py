@@ -7,8 +7,17 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 import shutil
 
+from reportlab.lib.pagesizes import LETTER, landscape
+from reportlab.lib.units import inch
+
 from src.db.connection import get_connection
-from src.services.pdf_service import build_pdf_path, write_preformatted_pages_pdf
+from src.services.pdf_service import (
+    build_pdf_path,
+    build_report_story,
+    build_story_pdf,
+    build_table,
+    paragraph,
+)
 
 
 PAYMENT_FORM_CODES = {
@@ -498,33 +507,62 @@ def render_payment_session_deposit_pdf(
         for row in payments
         if str(row["payment_form"] or "").upper() in {"1", "2", "3", "CK", "CS", "MO"}
     )
-    lines = [
-        "LAKE LAFAYETTE LANDOWNERS ASSOCIATION, INC.",
-        "PAYMENT SESSION / DEPOSIT SLIP",
-        f"POSTING DATE: {session['posting_date']}",
-        "",
-        "OWNER  NAME                          AMOUNT     FORM / CHECK       LOTS       PAID THROUGH",
-        "-----  ----------------------------  ---------  -----------------  ---------  ------------",
-    ]
+    rows: list[list[object]] = [["Owner", "Name", "Amount", "Form / Check", "Lots", "Paid Through"]]
     for row in payments:
         name = " ".join(part for part in [row["first_name"], row["last_name"]] if part)
         form = payment_form_label(row["payment_form"])
         if row["check_number"]:
             form = f"{form} {row['check_number']}"
-        lines.append(
-            f"{str(row['owner_code'] or ''):<6} {name[:28]:<28} "
-            f"{float(row['payment_amount'] or 0):>9.2f}  {form[:17]:<17}  "
-            f"{str(row['lots'] or '')[:9]:<9}  {str(row['paid_through'] or '')[:12]}"
+        rows.append(
+            [
+                str(row["owner_code"] or ""),
+                name,
+                f"${float(row['payment_amount'] or 0):,.2f}",
+                form,
+                str(row["lots"] or ""),
+                str(row["paid_through"] or ""),
+            ]
         )
-    lines.extend([
-        "",
-        f"TOTAL NUMBER OF PAYMENTS: {len(payments)}",
-        f"TOTAL NUMBER OF LOT POSTINGS: {sum(len(str(row['lots'] or '').split(', ')) for row in payments)}",
-        f"TOTAL AMOUNT RECEIVED AND RECORDED: ${total_received:,.2f}",
-        f"TOTAL CASH, CHECKS, AND MONEY ORDERS FOR DEPOSIT: ${deposit_total:,.2f}",
-    ])
+    story = build_report_story(
+        "Payment Session / Deposit Slip",
+        [
+            "Lake Lafayette Landowners Association, Inc.",
+            f"<b>Posting date:</b> {session['posting_date']}",
+        ],
+    )
+    story.append(
+        build_table(
+            rows,
+            [0.65 * inch, 1.75 * inch, 0.85 * inch, 1.45 * inch, 3.0 * inch, 1.35 * inch],
+            wrap_cells=True,
+            column_alignments=["LEFT", "LEFT", "RIGHT", "LEFT", "LEFT", "LEFT"],
+            font_size=8,
+        )
+    )
+    lot_postings = sum(len(str(row["lots"] or "").split(", ")) for row in payments)
+    story.extend(
+        [
+            paragraph(f"<b>Total number of payments:</b> {len(payments)}", small=True),
+            paragraph(f"<b>Total number of lot postings:</b> {lot_postings}", small=True),
+            paragraph(
+                f"<b>Total amount received and recorded:</b> ${total_received:,.2f}",
+                small=True,
+            ),
+            paragraph(
+                "<b>Total cash, checks, and money orders for deposit:</b> "
+                f"${deposit_total:,.2f}",
+                small=True,
+            ),
+        ]
+    )
     output_path = build_pdf_path(output_dir, f"payment_session_{session_id}_deposit_slip")
-    return write_preformatted_pages_pdf(output_path, [lines], title="Payment Session Deposit Slip")
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Payment Session Deposit Slip",
+        footer_text="Lake Lafayette Landowners Association - Payment Session Deposit Slip",
+        page_size=landscape(LETTER),
+    )
 
 
 def default_payment_date() -> str:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from html import escape
 from importlib.util import find_spec
 from pathlib import Path
+import textwrap
 from typing import Iterable
 
 from reportlab.lib import colors
@@ -108,24 +109,81 @@ def write_preformatted_pages_pdf(
     pages: Iterable[Iterable[str]],
     *,
     left_margin: float = 0.5 * inch,
+    right_margin: float = 0.5 * inch,
     top_margin: float = 0.55 * inch,
+    bottom_margin: float = 0.55 * inch,
     font_name: str = "Courier",
     font_size: float = 11,
     line_height: float | None = None,
     title: str | None = None,
+    footer_text: str | None = None,
+    page_size: tuple[float, float] = LETTER,
 ) -> Path:
+    """Write fixed-width text without allowing long or numerous lines to leave the page.
+
+    Each iterable in ``pages`` still starts on a new physical page, preserving the
+    legacy receipt-per-page behavior. Oversized logical pages are continued onto as
+    many physical pages as necessary, and long lines are wrapped at the printable
+    right margin.
+    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    pdf = canvas.Canvas(str(output_path), pagesize=LETTER)
+    pdf = canvas.Canvas(str(output_path), pagesize=page_size)
     pdf.setTitle(title or output_path.stem)
-    width, height = LETTER
+    width, height = page_size
     step = line_height or (font_size * 1.15)
-    for page_lines in pages:
-        y = height - top_margin
-        pdf.setFont(font_name, font_size)
-        for line in page_lines:
-            pdf.drawString(left_margin, y, str(line))
-            y -= step
+    printable_width = max(1, width - left_margin - right_margin)
+    # Courier is fixed width at roughly 0.6 em. All current callers use Courier,
+    # but this conservative calculation also prevents clipping for other fonts.
+    max_characters = max(1, int(printable_width / (font_size * 0.6)))
+    line_capacity = max(1, int((height - top_margin - bottom_margin) // step) + 1)
+
+    def wrapped_lines(page_lines: Iterable[str]) -> list[str]:
+        result: list[str] = []
+        for value in page_lines:
+            line = str(value)
+            if not line:
+                result.append("")
+                continue
+            if pdf.stringWidth(line, font_name, font_size) <= printable_width:
+                result.append(line)
+                continue
+            result.extend(
+                textwrap.wrap(
+                    line,
+                    width=max_characters,
+                    replace_whitespace=False,
+                    drop_whitespace=True,
+                    break_long_words=True,
+                    break_on_hyphens=False,
+                )
+                or [""]
+            )
+        return result
+
+    def finish_page() -> None:
+        if footer_text:
+            pdf.setFont("Helvetica", 8)
+            pdf.setFillColor(colors.HexColor("#5f6b7a"))
+            pdf.drawString(left_margin, 0.25 * inch, footer_text)
+            pdf.drawRightString(
+                width - right_margin,
+                0.25 * inch,
+                f"Page {pdf.getPageNumber()}",
+            )
+            pdf.setFillColor(colors.black)
         pdf.showPage()
+
+    for page_lines in pages:
+        lines = wrapped_lines(page_lines)
+        if not lines:
+            lines = [""]
+        for start in range(0, len(lines), line_capacity):
+            y = height - top_margin
+            pdf.setFont(font_name, font_size)
+            for line in lines[start : start + line_capacity]:
+                pdf.drawString(left_margin, y, line)
+                y -= step
+            finish_page()
     pdf.save()
     return output_path
 

@@ -5,8 +5,17 @@ from datetime import date, datetime
 from pathlib import Path
 import shutil
 
+from reportlab.lib.units import inch
+
 from src.db.connection import get_connection
-from src.services.pdf_service import build_pdf_path, write_preformatted_pages_pdf
+from src.services.pdf_service import (
+    build_pdf_path,
+    build_report_story,
+    build_story_pdf,
+    build_table,
+    page_break,
+    write_preformatted_pages_pdf,
+)
 
 
 @dataclass(slots=True)
@@ -491,37 +500,39 @@ def render_property_sale_receipt_pdf(
 ) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = build_pdf_path(output_dir, f"{file_stem}_{timestamp}")
-    pages: list[list[str]] = []
-    for line in receipt_lines:
-        seller_prefix = f"    SELLER: {line.seller_owner_code:<8} "
-        buyer_prefix = f"    BUYER:  {line.buyer_owner_code:<8} "
-        note_column = 52
-        seller_gap = max(2, note_column - len(seller_prefix) - len(line.seller_name))
-        buyer_gap = max(2, note_column - len(buyer_prefix) - len(line.buyer_name))
-        row1 = (
-            f"LOT NO: {line.lot_number:<4}         "
-            f"SALE DATE: {line.sale_date:<15}"
-            f"RECORDED ON: {line.recorded_on:<12}"
+    story: list = []
+    for index, line in enumerate(receipt_lines):
+        story.extend(build_report_story("Property Sale Receipt"))
+        story.append(
+            build_table(
+                [
+                    ["Lot number", "Sale date", "Recorded on"],
+                    [line.lot_number, line.sale_date, line.recorded_on],
+                ],
+                [1.3 * inch, 1.7 * inch, 3.5 * inch],
+                wrap_cells=True,
+                column_alignments=["LEFT", "LEFT", "LEFT"],
+            )
         )
-        row2 = (
-            f"{seller_prefix}"
-            f"{line.seller_name}"
-            f"{' ' * seller_gap}{line.seller_note}"
+        story.append(
+            build_table(
+                [
+                    ["Role", "Owner code", "Name", "Note"],
+                    ["Seller", line.seller_owner_code, line.seller_name, line.seller_note],
+                    ["Buyer", line.buyer_owner_code, line.buyer_name, line.buyer_note],
+                ],
+                [0.75 * inch, 0.9 * inch, 2.35 * inch, 2.5 * inch],
+                wrap_cells=True,
+                column_alignments=["LEFT", "LEFT", "LEFT", "LEFT"],
+            )
         )
-        row3 = (
-            f"{buyer_prefix}"
-            f"{line.buyer_name}"
-            f"{' ' * buyer_gap}{line.buyer_note}"
-        )
-        pages.append([row1, row2, row3])
-    return write_preformatted_pages_pdf(
+        if index < len(receipt_lines) - 1:
+            story.append(page_break())
+    return build_story_pdf(
         output_path,
-        pages,
-        left_margin=0.05 * 72,
-        top_margin=0.55 * 72,
-        font_size=11,
-        line_height=12.65,
+        story,
         title="Property Sale Receipt",
+        footer_text="Lake Lafayette Landowners Association - Property Sale Receipt",
     )
 
 

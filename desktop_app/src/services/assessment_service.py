@@ -3,11 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
+from html import escape
 from pathlib import Path
 import shutil
 
+from reportlab.lib.units import inch
+
 from src.db.connection import get_connection
-from src.services.pdf_service import build_pdf_path, write_preformatted_pages_pdf
+from src.services.pdf_service import (
+    build_pdf_path,
+    build_report_story,
+    build_story_pdf,
+    build_table,
+    paragraph,
+)
 
 
 EXEMPT_OWNER_CODES = {"2489", "2642", "2959"}
@@ -326,23 +335,51 @@ def render_assessment_run_pdf(db_path: Path, run_id: int, output_dir: Path) -> P
         total_due = float(connection.execute("SELECT COALESCE(SUM(total_due),0) FROM lots").fetchone()[0])
 
     period = " ".join(part for part in [run["assessment_season"], run["assessment_year"]] if part).strip()
-    lines = [
-        "ASSESSMENT UPDATE AND DELINQUENCY ANALYSIS",
-        f"PERIOD: {period or '-'}",
-        f"ASSESSMENT DATE: {run['assessment_date']}",
-        f"NEW ASSESSMENT: ${float(run['assessment_amount'] or 0):,.2f}",
-        "",
-        f"LOTS UPDATED: {run['lots_updated']}",
-        f"OWNERS UPDATED: {run['owners_updated']}",
-        f"EXEMPT LOTS: {run['excluded_lots']}",
-        f"FROZEN LOTS: {run['freeze_lots']}",
-        f"TOTAL LOTS: {total_lots}",
-        f"LOTS CURRENT: {current_lots}",
-        f"TOTAL ASSESSMENTS AND INTEREST DUE: ${total_due:,.2f}",
-        "",
-        "DELINQUENCY BANDS",
-    ]
-    lines.extend(f"{label:<24} {count:>5} lots  ${amount:>12,.2f}" for label, (count, amount) in counts.items())
-    lines.extend(["", f"BACKUP: {run['backup_path']}"])
+    story = build_report_story(
+        "Assessment Update and Delinquency Analysis",
+        [
+            f"<b>Period:</b> {escape(period or '-')}",
+            f"<b>Assessment date:</b> {escape(str(run['assessment_date'] or '-'))}",
+            f"<b>New assessment:</b> ${float(run['assessment_amount'] or 0):,.2f}",
+        ],
+    )
+    story.append(
+        build_table(
+            [
+                ["Measure", "Result"],
+                ["Lots updated", f"{int(run['lots_updated'] or 0):,}"],
+                ["Owners updated", f"{int(run['owners_updated'] or 0):,}"],
+                ["Exempt lots", f"{int(run['excluded_lots'] or 0):,}"],
+                ["Frozen lots", f"{int(run['freeze_lots'] or 0):,}"],
+                ["Total lots", f"{total_lots:,}"],
+                ["Lots current", f"{current_lots:,}"],
+                ["Total assessments and interest due", f"${total_due:,.2f}"],
+            ],
+            [3.6 * inch, 2.0 * inch],
+            wrap_cells=True,
+            column_alignments=["LEFT", "RIGHT"],
+        )
+    )
+    story.append(paragraph("<b>Delinquency bands</b>"))
+    story.append(
+        build_table(
+            [
+                ["Balance", "Lots", "Amount"],
+                *[
+                    [label, f"{count:,}", f"${amount:,.2f}"]
+                    for label, (count, amount) in counts.items()
+                ],
+            ],
+            [3.0 * inch, 1.0 * inch, 1.6 * inch],
+            wrap_cells=True,
+            column_alignments=["LEFT", "RIGHT", "RIGHT"],
+        )
+    )
+    story.append(paragraph(f"<b>Backup:</b> {escape(str(run['backup_path'] or '-'))}", small=True))
     output_path = build_pdf_path(output_dir, f"assessment_update_run_{run_id}")
-    return write_preformatted_pages_pdf(output_path, [lines], title="Assessment Update Report")
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Assessment Update Report",
+        footer_text="Lake Lafayette Landowners Association - Assessment Update Report",
+    )

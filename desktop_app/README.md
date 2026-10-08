@@ -64,6 +64,7 @@ to confirm the PDF runtime is available before testing notice/report printing.
 - includes owner/lot/property/ID/boat history, migration-readiness checks, and client-review PDFs
 - creates a complete individual payment-history PDF from either the History screen or an owner's Payment History tab
 - formats wide owner and lot reports in landscape with wrapped text, repeated headings, and page numbers
+- keeps notices, histories, financial reports, deposit slips, lien logs, assessment reports, and sale receipts inside printable margins with automatic continuation pages
 - keeps county land trust status separate from collection-agency status
 - posts balanced financial transactions with searchable history and auditable recoding
 

@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from reportlab.lib.units import inch
+
 from src.db.connection import get_connection
-from src.services.pdf_service import build_pdf_path, write_preformatted_pages_pdf
+from src.services.pdf_service import build_pdf_path, build_report_story, build_story_pdf, build_table
 
 
 @dataclass(slots=True)
@@ -145,26 +147,44 @@ def run_data_health_checks(db_path: Path) -> list[UtilityCheckResult]:
 def render_migration_readiness_pdf(db_path: Path, output_dir: Path) -> Path:
     results = run_data_health_checks(db_path)
     total_issues = sum(result.issue_count for result in results)
-    lines = [
-        "LAKE LAFAYETTE MIGRATION READINESS REPORT",
-        "",
-        f"CHECKS WITH ITEMS TO REVIEW: {sum(1 for result in results if result.issue_count)}",
-        f"TOTAL REVIEW ITEMS: {total_issues}",
-        "",
-        "Items marked below come from the imported dBase backup. Review them with the",
-        "client before final cutover; the app does not silently rewrite source records.",
-    ]
+    story = build_report_story(
+        "Lake Lafayette Migration Readiness Report",
+        [
+            f"<b>Checks with items to review:</b> {sum(1 for result in results if result.issue_count)}",
+            f"<b>Total review items:</b> {total_issues}",
+            (
+                "Items below come from the imported dBase backup. Review them with the "
+                "client before final cutover; the app does not silently rewrite source records."
+            ),
+        ],
+    )
+    rows: list[list[object]] = [["Check", "Record / result"]]
     for result in results:
-        lines.extend(["", f"{result.title.upper()}: {result.issue_count}"])
         if result.details:
-            lines.extend(f"  - {detail}" for detail in result.details)
+            for index, detail in enumerate(result.details):
+                rows.append(
+                    [
+                        f"{result.title}\n({result.issue_count} item{'s' if result.issue_count != 1 else ''})"
+                        if index == 0
+                        else "",
+                        detail,
+                    ]
+                )
         else:
-            lines.append("  OK - no issues found")
+            rows.append([f"{result.title}\n(0 items)", "OK - no issues found"])
+    story.append(
+        build_table(
+            rows,
+            [2.2 * inch, 5.0 * inch],
+            wrap_cells=True,
+            column_alignments=["LEFT", "LEFT"],
+            font_size=8.5,
+        )
+    )
     output_path = build_pdf_path(output_dir, "migration_readiness_report")
-    return write_preformatted_pages_pdf(
+    return build_story_pdf(
         output_path,
-        [lines],
+        story,
         title="Migration Readiness Report",
-        font_size=9,
-        line_height=11,
+        footer_text="Lake Lafayette Landowners Association - Migration Readiness",
     )

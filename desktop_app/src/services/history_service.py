@@ -4,6 +4,7 @@ from html import escape
 from pathlib import Path
 import re
 
+from reportlab.lib.pagesizes import LETTER, landscape
 from reportlab.lib.units import inch
 
 from src.db.connection import get_connection
@@ -120,8 +121,53 @@ def render_history_pdf(
     table_rows = [headings, *rows]
     if not rows:
         table_rows.append(["No matching records.", *([""] * (len(headings) - 1))])
-    story.append(build_table(table_rows))
-    return build_story_pdf(output_path, story, title=title)
+
+    page_size = landscape(LETTER) if len(headings) >= 6 else LETTER
+    usable_width = (page_size[0] - (1.1 * inch)) / inch
+    heading_weights = {
+        "date": 0.85,
+        "owner": 0.58,
+        "name": 1.85,
+        "owed": 0.75,
+        "paid": 0.72,
+        "form": 1.15,
+        "check": 0.78,
+        "lot": 0.55,
+        "through": 0.8,
+        "seller": 0.72,
+        "buyer": 0.72,
+        "entered": 0.95,
+        "status": 0.72,
+        "type": 0.9,
+        "owner cards": 0.72,
+        "renter cards": 0.72,
+        "boat": 0.48,
+        "source": 0.62,
+    }
+    weights = [heading_weights.get(str(heading).strip().lower(), 1.0) for heading in headings]
+    scale = usable_width / sum(weights)
+    widths = [weight * scale * inch for weight in weights]
+    numeric_headings = {"owed", "paid", "owner cards", "renter cards", "boat"}
+    alignments = [
+        "RIGHT" if str(heading).strip().lower() in numeric_headings else "LEFT"
+        for heading in headings
+    ]
+    story.append(
+        build_table(
+            table_rows,
+            widths,
+            wrap_cells=True,
+            column_alignments=alignments,
+            font_size=7.5 if len(headings) >= 7 else 8,
+        )
+    )
+    return build_story_pdf(
+        output_path,
+        story,
+        title=title,
+        footer_text=f"Lake Lafayette Landowners Association - {title}",
+        page_size=page_size,
+    )
 
 
 def get_owner_payment_history(db_path: Path, owner_code: str) -> dict:
@@ -224,6 +270,8 @@ def render_owner_payment_history_pdf(db_path: Path, output_dir: Path, owner_code
         build_table(
             [["Date", "Owed Before", "Paid", "Payment Form", "Check / Reference"], *rows],
             [0.9 * inch, 1.05 * inch, 0.95 * inch, 1.75 * inch, 1.75 * inch],
+            wrap_cells=True,
+            column_alignments=["LEFT", "RIGHT", "RIGHT", "LEFT", "LEFT"],
         )
     )
     return build_story_pdf(
