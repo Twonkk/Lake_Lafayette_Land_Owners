@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 import re
 
+from pypdf import PdfReader, PdfWriter
 from reportlab.lib.pagesizes import LETTER
 from reportlab.pdfgen import canvas
 
@@ -127,8 +129,9 @@ def render_notice_batch_pdfs(
     batch_size: int,
     output_dir: Path,
     season_label: str,
+    after_batch: Callable[[NoticeBatch, int, Path], None] | None = None,
 ) -> list[Path]:
-    """Render every owner across one multi-page PDF per configured batch."""
+    """Render each batch in order, optionally pausing through a progress callback."""
     batches = build_notice_batches(owners, batch_size)
     created_files: list[Path] = []
     batch_count = len(batches)
@@ -139,17 +142,48 @@ def render_notice_batch_pdfs(
             f"assessment_notices_batch_{batch.batch_number:03d}_"
             f"{start_name}_to_{end_name}"
         )
-        created_files.append(
-            render_notice_pdf(
-                owners=batch.owners,
-                output_dir=output_dir,
-                season_label=(
-                    f"{season_label} - Batch {batch.batch_number} of {batch_count}"
-                ),
-                file_stem=file_stem,
-            )
+        output_path = render_notice_pdf(
+            owners=batch.owners,
+            output_dir=output_dir,
+            season_label=(
+                f"{season_label} - Batch {batch.batch_number} of {batch_count}"
+            ),
+            file_stem=file_stem,
         )
+        created_files.append(output_path)
+        if after_batch is not None:
+            after_batch(batch, batch_count, output_path)
     return created_files
+
+
+def merge_notice_batch_pdfs(
+    batch_files: Sequence[Path],
+    output_dir: Path,
+    season_label: str,
+) -> Path:
+    """Merge completed batch PDFs into one complete notice-run document."""
+    if not batch_files:
+        raise ValueError("No completed notice batches were provided to combine.")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = build_pdf_path(output_dir, f"assessment_notices_complete_run_{timestamp}")
+    writer = PdfWriter()
+    for batch_file in batch_files:
+        if not batch_file.is_file():
+            raise FileNotFoundError(f"Notice batch PDF was not found: {batch_file}")
+        reader = PdfReader(str(batch_file))
+        for page in reader.pages:
+            writer.add_page(page)
+    writer.add_metadata(
+        {
+            "/Title": f"Assessment Notices - {season_label}",
+            "/Author": "Lake Lafayette Landowners Association",
+            "/Subject": f"Complete notice run from {len(batch_files)} batch file(s)",
+        }
+    )
+    with output_path.open("wb") as output_stream:
+        writer.write(output_stream)
+    return output_path
 
 
 def build_notice_file_stem(owner: NoticeOwner, timestamp: datetime | None = None) -> str:

@@ -100,7 +100,7 @@ SCREEN_HELP: dict[str, ScreenHelp] = {
         actions=(
             "Choose individual, all-owner, or lien-only notice mode.",
             "Create Selected PDF prints one owner notice.",
-            "Open Batch PDFs creates multi-page PDFs for every eligible owner, split by the batch size.",
+            "Create Batch Notices guides you through each batch, then opens one combined PDF containing the complete notice run.",
         ),
         legacy_reference="In dBase: Group 1, option 4 — Print Assessment Notices.",
     ),
