@@ -7,10 +7,12 @@ from src.runtime import open_with_default_app
 from src.services.notice_service import (
     build_notice_batches,
     build_notice_file_stem,
+    default_notice_season_label,
     notice_query_for_mode,
     owner_display_name,
-    owner_has_collection_lots,
+    owner_has_county_land_trust_lots,
     owner_notice_total,
+    merge_notice_batch_pdfs,
     render_notice_pdf,
     render_notice_batch_pdfs,
     should_omit_notice,
@@ -21,9 +23,11 @@ class NoticesFrame(ttk.Frame):
     def __init__(self, parent: tk.Misc, db_path: Path) -> None:
         super().__init__(parent, style="App.TFrame")
         self.repository = NoticeRepository(db_path)
+        self.db_path = db_path
         self.search_var = tk.StringVar()
         self.batch_size_var = tk.StringVar(value="100")
         self.mode_var = tk.StringVar(value="all")
+        self.season_var = tk.StringVar(value=default_notice_season_label(db_path))
         self.notice_owners = []
         self.filtered_owners = []
         self.output_dir = db_path.parent / "generated_notices"
@@ -71,6 +75,12 @@ class NoticesFrame(ttk.Frame):
 
         ttk.Button(controls, text="Refresh", command=self.refresh_candidates).grid(
             row=0, column=6, sticky="w"
+        )
+        ttk.Label(controls, text="Assessment season / year").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=(8, 0)
+        )
+        ttk.Entry(controls, textvariable=self.season_var).grid(
+            row=1, column=1, columnspan=3, sticky="ew", padx=(0, 12), pady=(8, 0)
         )
 
         split = ttk.Panedwindow(self, orient="horizontal")
@@ -134,7 +144,7 @@ class NoticesFrame(ttk.Frame):
         ttk.Button(actions, text="Open Selected PDF", command=self.pdf_selected_notice).grid(
             row=0, column=0, sticky="w", padx=(0, 8)
         )
-        ttk.Button(actions, text="Open Batch PDFs", command=self.pdf_batch_run).grid(
+        ttk.Button(actions, text="Create Batch Notices", command=self.pdf_batch_run).grid(
             row=0, column=1, sticky="w"
         )
 
@@ -227,7 +237,7 @@ class NoticesFrame(ttk.Frame):
         has_freeze = any(lot.freeze_flag == "Y" for lot in owner.lots)
         for lot in owner.lots:
             total_display = lot.current_assessment if has_freeze else lot.total_due
-            marker = "**" if owner_has_collection_lots(owner) and lot.collection_flag == "Y" else ""
+            marker = "**" if lot.county_land_trust_flag == "Y" else ""
             lines.append(
                 f"  {lot.lot_number} {marker} delinquent ${lot.delinquent_assessment:,.2f} "
                 f"interest ${lot.delinquent_interest + lot.current_interest:,.2f} "
@@ -237,9 +247,9 @@ class NoticesFrame(ttk.Frame):
         if has_freeze:
             lines.append("")
             lines.append("Freeze note: This owner has a freeze on at least one lot. Legacy notices show the current assessment total in that case.")
-        if owner_has_collection_lots(owner):
+        if owner_has_county_land_trust_lots(owner):
             lines.append("")
-            lines.append("Collection note: Lots marked with ** are in collection / county-taken status and need the special warning text from the legacy notices.")
+            lines.append("County land-trust note: Lots marked with ** are excluded from the amount to remit.")
 
         self._set_preview("\n".join(lines))
 
@@ -250,7 +260,7 @@ class NoticesFrame(ttk.Frame):
         self.preview_text.configure(state="disabled")
 
     def _season_label(self) -> str:
-        return "Temporary Notice Layout"
+        return self.season_var.get().strip() or default_notice_season_label(self.db_path)
 
     def _open_created_file(self, path: Path, title: str, detail_lines: list[str]) -> None:
         try:
@@ -303,32 +313,71 @@ class NoticesFrame(ttk.Frame):
         if batch_size < 1:
             messagebox.showerror("Invalid batch size", "Batch size must be at least 1.")
             return
+
+        def show_batch_progress(batch, batch_count: int, output_path: Path) -> None:
+            if batch.batch_number >= batch_count:
+                return
+            messagebox.showinfo(
+                f"Batch {batch.batch_number} of {batch_count} complete",
+                "\n".join(
+                    [
+                        f"Batch {batch.batch_number} is complete.",
+                        f"Included {len(batch.owners)} owner notice(s).",
+                        f"Saved as: {output_path.name}",
+                        "",
+                        f"Press OK to create batch {batch.batch_number + 1} of {batch_count}.",
+                    ]
+                ),
+            )
+
         try:
             created_files = render_notice_batch_pdfs(
                 owners=self.filtered_owners,
                 batch_size=batch_size,
                 output_dir=self.output_dir,
                 season_label=self._season_label(),
+                after_batch=show_batch_progress,
             )
         except Exception as exc:
             messagebox.showerror("PDF creation failed", str(exc))
             return
         if created_files:
-            first_file = created_files[0]
+            try:
+                combined_file = merge_notice_batch_pdfs(
+                    created_files,
+                    self.output_dir,
+                    self._season_label(),
+                )
+            except Exception as exc:
+                messagebox.showerror(
+                    "Batch PDFs created, but combining failed",
+                    "\n".join(
+                        [
+                            f"Created {len(created_files)} individual batch PDF file(s).",
+                            f"Folder: {self.output_dir}",
+                            "",
+                            "The single combined PDF could not be created.",
+                            str(exc),
+                        ]
+                    ),
+                )
+                return
             self._open_created_file(
-                first_file,
-                "Batch PDF preview failed",
-                ["PDF saved to:", str(first_file)],
+                combined_file,
+                "Combined notice PDF preview failed",
+                ["Combined PDF saved to:", str(combined_file)],
             )
             messagebox.showinfo(
-                "Notice batch complete",
+                "All notice batches complete",
                 "\n".join(
                     [
-                        f"Created {len(created_files)} batch PDF file(s).",
+                        f"Completed all {len(created_files)} batch(es).",
                         f"Included {len(self.filtered_owners)} owner notice(s).",
-                        "Each owner has a separate page.",
                         "",
-                        "The first batch PDF has been opened.",
+                        "One combined PDF containing every batch has been opened.",
+                        f"Combined file: {combined_file.name}",
+                        "",
+                        "The individual batch PDFs were also kept in the same folder.",
                         f"Folder: {self.output_dir}",
                     ]
                 ),

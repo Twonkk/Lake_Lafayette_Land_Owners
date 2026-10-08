@@ -52,11 +52,22 @@ to confirm the PDF runtime is available before testing notice/report printing.
 
 - creates a local SQLite database
 - imports owner, lot, notes, and payment history from the legacy DBF files
+- preserves missing legacy owner codes as safe, clearly marked review records instead of orphaning their lots or payment history
 - provides a familiar Menu with the original dBase group and option numbers
-- keeps the sidebar uncluttered with one Menu button
+- keeps the sidebar uncluttered with Menu and Migration Review buttons
+- turns incomplete owner records, special X-lot exclusions, and legacy rounding differences into a client-facing decision queue
+- restores recoverable deleted owners only after confirmation and records every migration decision with a backup
+- prevents deletion when a placeholder is still connected to lots, payments, sales, notes, or history
 - uses larger controls, Windows DPI awareness, maximized startup, and a scrollable Menu for scaled displays
 - connects every main Help panel to the dBase option it replaces
 - provides owner/lot search and the primary daily workflows after import
+- includes owner/lot/property/ID/boat history, migration-readiness checks, and client-review PDFs
+- creates a complete individual payment-history PDF from either the History screen or an owner's Payment History tab
+- formats wide owner and lot reports in landscape with wrapped text, repeated headings, and page numbers
+- keeps notices, histories, financial reports, deposit slips, lien logs, assessment reports, and sale receipts inside printable margins with automatic continuation pages
+- guides the operator through assessment-notice batches and opens one combined PDF after the final batch
+- keeps county land trust status separate from collection-agency status
+- posts balanced financial transactions with searchable history and auditable recoding
 
 Use the `Import Legacy Data` button in the app to load the current `../dbase` files.
 

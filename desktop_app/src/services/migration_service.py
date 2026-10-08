@@ -42,6 +42,12 @@ def reconcile_migration(db_path: Path) -> MigrationReconciliation:
                     SELECT o.owner_code
                     FROM owners o
                     LEFT JOIN lots l ON l.owner_code = o.owner_code
+                    WHERE UPPER(TRIM(COALESCE(o.current_flag, ''))) IN ('T', 'Y', 'TRUE')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM migration_review_decisions d
+                          WHERE d.category = 'x_lot_exclusion'
+                            AND d.record_key = o.owner_code
+                      )
                     GROUP BY o.owner_code, o.number_lots
                     HAVING COALESCE(o.number_lots, 0) <> COUNT(l.lot_number)
                 )
@@ -55,6 +61,11 @@ def reconcile_migration(db_path: Path) -> MigrationReconciliation:
                     SELECT o.owner_code
                     FROM owners o
                     LEFT JOIN lots l ON l.owner_code = o.owner_code
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM migration_review_decisions d
+                        WHERE d.category = 'owner_rounding'
+                          AND d.record_key = o.owner_code
+                    )
                     GROUP BY o.owner_code, o.total_owed
                     HAVING ROUND(COALESCE(o.total_owed, 0), 2)
                         <> ROUND(COALESCE(SUM(l.total_due), 0), 2)

@@ -3,10 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
+from html import escape
 from pathlib import Path
 import shutil
 
+from reportlab.lib.units import inch
+
 from src.db.connection import get_connection
+from src.services.pdf_service import (
+    build_pdf_path,
+    build_report_story,
+    build_story_pdf,
+    build_table,
+    paragraph,
+)
 
 
 EXEMPT_OWNER_CODES = {"2489", "2642", "2959"}
@@ -31,6 +41,7 @@ class AssessmentResult:
     owners_updated: int
     exempt_lots: int
     freeze_lots: int
+    run_id: int
 
 
 def default_assessment_date() -> str:
@@ -50,7 +61,7 @@ def _money(value: object) -> float:
 def _make_backup(db_path: Path) -> Path:
     backup_dir = db_path.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     backup_path = backup_dir / f"{db_path.stem}_assessment_{stamp}.sqlite3"
     shutil.copy2(db_path, backup_path)
     return backup_path
@@ -101,7 +112,28 @@ def preview_assessment_run(db_path: Path, assessment_amount: float) -> Assessmen
     )
 
 
-def apply_assessment_run(db_path: Path, assessment_amount: float, assessment_date: str) -> AssessmentResult:
+def default_assessment_period(db_path: Path) -> tuple[str, str]:
+    with get_connection(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT TRIM(COALESCE(season, '')) season, TRIM(COALESCE(year, '')) year
+            FROM legacy_system_history
+            WHERE TRIM(COALESCE(season, '')) <> '' OR TRIM(COALESCE(year, '')) <> ''
+            ORDER BY id DESC LIMIT 1
+            """
+        ).fetchone()
+    if row is None:
+        return "", str(date.today().year)
+    return str(row["season"] or ""), str(row["year"] or date.today().year)
+
+
+def apply_assessment_run(
+    db_path: Path,
+    assessment_amount: float,
+    assessment_date: str,
+    assessment_season: str = "",
+    assessment_year: str = "",
+) -> AssessmentResult:
     assessment_amount = _money(assessment_amount)
     preview = preview_assessment_run(db_path, assessment_amount)
     backup_path = _make_backup(db_path)
@@ -238,7 +270,7 @@ def apply_assessment_run(db_path: Path, assessment_amount: float, assessment_dat
             ).rowcount
             owners_updated += changed
 
-        connection.execute(
+        run_id = int(connection.execute(
             """
             INSERT INTO assessment_runs (
                 created_at,
@@ -249,8 +281,10 @@ def apply_assessment_run(db_path: Path, assessment_amount: float, assessment_dat
                 owners_updated,
                 excluded_lots,
                 freeze_lots,
+                assessment_season,
+                assessment_year,
                 notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 created_at,
@@ -261,9 +295,11 @@ def apply_assessment_run(db_path: Path, assessment_amount: float, assessment_dat
                 owners_updated,
                 preview.exempt_lots,
                 preview.freeze_lots,
+                assessment_season.strip(),
+                assessment_year.strip(),
                 "Legacy-style assessment roll-forward",
             ],
-        )
+        ).lastrowid)
         connection.commit()
 
     return AssessmentResult(
@@ -272,4 +308,78 @@ def apply_assessment_run(db_path: Path, assessment_amount: float, assessment_dat
         owners_updated=owners_updated,
         exempt_lots=preview.exempt_lots,
         freeze_lots=preview.freeze_lots,
+        run_id=run_id,
+    )
+
+
+def render_assessment_run_pdf(db_path: Path, run_id: int, output_dir: Path) -> Path:
+    with get_connection(db_path) as connection:
+        run = connection.execute("SELECT * FROM assessment_runs WHERE id = ?", [run_id]).fetchone()
+        if run is None:
+            raise ValueError("Assessment run was not found.")
+        counts = {}
+        for label, minimum, maximum in [
+            ("$0.01 to $49.99", 0.01, 50), ("$50.00 to $99.99", 50, 100),
+            ("$100.00 to $249.99", 100, 250), ("$250.00 to $499.99", 250, 500),
+            ("$500.00 to $999.99", 500, 1000), ("$1,000.00 and above", 1000, None),
+        ]:
+            if maximum is None:
+                count = connection.execute("SELECT COUNT(*) FROM lots WHERE total_due >= ?", [minimum]).fetchone()[0]
+                total = connection.execute("SELECT COALESCE(SUM(total_due),0) FROM lots WHERE total_due >= ?", [minimum]).fetchone()[0]
+            else:
+                count = connection.execute("SELECT COUNT(*) FROM lots WHERE total_due >= ? AND total_due < ?", [minimum, maximum]).fetchone()[0]
+                total = connection.execute("SELECT COALESCE(SUM(total_due),0) FROM lots WHERE total_due >= ? AND total_due < ?", [minimum, maximum]).fetchone()[0]
+            counts[label] = (int(count), float(total or 0))
+        total_lots = int(connection.execute("SELECT COUNT(*) FROM lots").fetchone()[0])
+        current_lots = int(connection.execute("SELECT COUNT(*) FROM lots WHERE ROUND(COALESCE(total_due,0),2) <= 0").fetchone()[0])
+        total_due = float(connection.execute("SELECT COALESCE(SUM(total_due),0) FROM lots").fetchone()[0])
+
+    period = " ".join(part for part in [run["assessment_season"], run["assessment_year"]] if part).strip()
+    story = build_report_story(
+        "Assessment Update and Delinquency Analysis",
+        [
+            f"<b>Period:</b> {escape(period or '-')}",
+            f"<b>Assessment date:</b> {escape(str(run['assessment_date'] or '-'))}",
+            f"<b>New assessment:</b> ${float(run['assessment_amount'] or 0):,.2f}",
+        ],
+    )
+    story.append(
+        build_table(
+            [
+                ["Measure", "Result"],
+                ["Lots updated", f"{int(run['lots_updated'] or 0):,}"],
+                ["Owners updated", f"{int(run['owners_updated'] or 0):,}"],
+                ["Exempt lots", f"{int(run['excluded_lots'] or 0):,}"],
+                ["Frozen lots", f"{int(run['freeze_lots'] or 0):,}"],
+                ["Total lots", f"{total_lots:,}"],
+                ["Lots current", f"{current_lots:,}"],
+                ["Total assessments and interest due", f"${total_due:,.2f}"],
+            ],
+            [3.6 * inch, 2.0 * inch],
+            wrap_cells=True,
+            column_alignments=["LEFT", "RIGHT"],
+        )
+    )
+    story.append(paragraph("<b>Delinquency bands</b>"))
+    story.append(
+        build_table(
+            [
+                ["Balance", "Lots", "Amount"],
+                *[
+                    [label, f"{count:,}", f"${amount:,.2f}"]
+                    for label, (count, amount) in counts.items()
+                ],
+            ],
+            [3.0 * inch, 1.0 * inch, 1.6 * inch],
+            wrap_cells=True,
+            column_alignments=["LEFT", "RIGHT", "RIGHT"],
+        )
+    )
+    story.append(paragraph(f"<b>Backup:</b> {escape(str(run['backup_path'] or '-'))}", small=True))
+    output_path = build_pdf_path(output_dir, f"assessment_update_run_{run_id}")
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Assessment Update Report",
+        footer_text="Lake Lafayette Landowners Association - Assessment Update Report",
     )

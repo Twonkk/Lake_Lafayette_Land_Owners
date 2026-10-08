@@ -28,7 +28,8 @@ class CardsStickersFrame(ttk.Frame):
         self.sticker_quantity_var = tk.StringVar(value="1")
         self.sticker_amount_var = tk.StringVar(value="0.00")
         self.id_issue_date_var = tk.StringVar(value=default_issue_date())
-        self.id_quantity_var = tk.StringVar(value="1")
+        self.id_owner_quantity_var = tk.StringVar(value="1")
+        self.id_renter_quantity_var = tk.StringVar(value="0")
         self.results: list[dict] = []
 
         self.columnconfigure(0, weight=1)
@@ -102,13 +103,15 @@ class CardsStickersFrame(ttk.Frame):
         id_box.columnconfigure(1, weight=1)
         ttk.Label(id_box, text="Issue date").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
         ttk.Entry(id_box, textvariable=self.id_issue_date_var).grid(row=0, column=1, sticky="ew", pady=4)
-        ttk.Label(id_box, text="Quantity").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
-        ttk.Entry(id_box, textvariable=self.id_quantity_var).grid(row=1, column=1, sticky="ew", pady=4)
-        ttk.Label(id_box, text="Notes").grid(row=2, column=0, sticky="nw", padx=(0, 8), pady=4)
+        ttk.Label(id_box, text="Owner cards").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(id_box, textvariable=self.id_owner_quantity_var).grid(row=1, column=1, sticky="ew", pady=4)
+        ttk.Label(id_box, text="Renter cards").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(id_box, textvariable=self.id_renter_quantity_var).grid(row=2, column=1, sticky="ew", pady=4)
+        ttk.Label(id_box, text="Notes").grid(row=3, column=0, sticky="nw", padx=(0, 8), pady=4)
         self.id_notes = tk.Text(id_box, height=5, wrap="word")
-        self.id_notes.grid(row=2, column=1, sticky="ew", pady=4)
+        self.id_notes.grid(row=3, column=1, sticky="ew", pady=4)
         ttk.Button(id_box, text="Issue ID Card", command=self.issue_id_card).grid(
-            row=3, column=0, columnspan=2, sticky="ew", pady=(8, 0)
+            row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0)
         )
 
     def run_search(self, _event: object | None = None) -> None:
@@ -155,10 +158,17 @@ class CardsStickersFrame(ttk.Frame):
                 amount=float(self.sticker_amount_var.get().strip() or "0"),
                 notes=self.sticker_notes.get("1.0", "end").strip(),
             )
-            record_boat_sticker_purchase(self.db_path, request)
-            pdf = render_boat_sticker_receipt_pdf(self.db_path, request, self.db_path.parent / "generated_reports")
+            result = record_boat_sticker_purchase(self.db_path, request)
         except Exception as exc:
             messagebox.showerror("Boat sticker failed", str(exc))
+            return
+        try:
+            pdf = render_boat_sticker_receipt_pdf(self.db_path, request, self.db_path.parent / "generated_reports")
+        except Exception as exc:
+            messagebox.showwarning(
+                "Boat sticker saved; receipt could not be created",
+                f"The boat sticker entry was saved.\nBackup: {result.backup_path}\n\nReceipt issue: {exc}",
+            )
             return
         self._open_created_file(pdf, "Boat sticker preview failed")
         self.sticker_notes.delete("1.0", "end")
@@ -172,13 +182,22 @@ class CardsStickersFrame(ttk.Frame):
                 owner_code=self.selected_owner_code,
                 lot_number=self.selected_lot_var.get().strip(),
                 issue_date=self.id_issue_date_var.get().strip(),
-                quantity=int(self.id_quantity_var.get().strip() or "0"),
+                quantity=0,
+                owner_quantity=int(self.id_owner_quantity_var.get().strip() or "0"),
+                renter_quantity=int(self.id_renter_quantity_var.get().strip() or "0"),
                 notes=self.id_notes.get("1.0", "end").strip(),
             )
-            record_id_card_issue(self.db_path, request)
-            pdf = render_id_card_receipt_pdf(self.db_path, request, self.db_path.parent / "generated_reports")
+            result = record_id_card_issue(self.db_path, request)
         except Exception as exc:
             messagebox.showerror("ID card issue failed", str(exc))
+            return
+        try:
+            pdf = render_id_card_receipt_pdf(self.db_path, request, self.db_path.parent / "generated_reports")
+        except Exception as exc:
+            messagebox.showwarning(
+                "ID card saved; receipt could not be created",
+                f"The ID card order was saved.\nBackup: {result.backup_path}\n\nReceipt issue: {exc}",
+            )
             return
         self._open_created_file(pdf, "ID card preview failed")
         self.id_notes.delete("1.0", "end")

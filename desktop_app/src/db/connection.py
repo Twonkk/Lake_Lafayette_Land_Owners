@@ -16,6 +16,10 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
         "paid_current_interest": "NUMERIC DEFAULT 0",
         "paid_delinquent_assessment": "NUMERIC DEFAULT 0",
         "paid_delinquent_interest": "NUMERIC DEFAULT 0",
+        "session_id": "INTEGER",
+    },
+    "owner_payments": {
+        "session_id": "INTEGER",
     },
     "financial_transactions": {
         "fiscal_year": "TEXT",
@@ -30,6 +34,9 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
         # Existing pre-migration transactions came from TRANSFIL.DBF.
         # New databases use the schema's 'app' default for newly posted rows.
         "source": "TEXT NOT NULL DEFAULT 'legacy'",
+        "source_account_code": "TEXT",
+        "destination_account_code": "TEXT",
+        "correction_of_id": "INTEGER",
     },
     "financial_monthly": {
         "fiscal_year": "TEXT",
@@ -37,6 +44,19 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
     "property_sales": {
         "reversed_at": "TEXT",
         "reversal_backup_path": "TEXT",
+    },
+    "lots": {
+        "county_land_trust_flag": "TEXT DEFAULT 'N'",
+    },
+    "assessment_runs": {
+        "assessment_season": "TEXT",
+        "assessment_year": "TEXT",
+    },
+    "id_card_issues": {
+        "owner_quantity": "INTEGER DEFAULT 0",
+        "renter_quantity": "INTEGER DEFAULT 0",
+        "issue_year": "INTEGER",
+        "completed_flag": "TEXT DEFAULT 'N'",
     },
 }
 
@@ -121,6 +141,27 @@ def _run_migrations(connection: sqlite3.Connection) -> None:
                 f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
             )
     _migrate_financial_monthly_table(connection)
+    marker = connection.execute(
+        "SELECT value FROM app_meta WHERE key = 'separate_collection_and_land_trust_v1'"
+    ).fetchone()
+    if marker is None:
+        # Before this migration the lot-level column represented dBase CLT, but
+        # the collection screen also wrote to it. Preserve every existing Y as
+        # land-trust data, then retire the ambiguous lot collection value. New
+        # collection-agency activity is stored only on the owner and in events.
+        connection.execute(
+            """
+            UPDATE lots
+            SET county_land_trust_flag = CASE
+                WHEN UPPER(COALESCE(collection_flag, '')) = 'Y' THEN 'Y'
+                ELSE COALESCE(NULLIF(county_land_trust_flag, ''), 'N')
+            END,
+                collection_flag = 'N'
+            """
+        )
+        connection.execute(
+            "INSERT INTO app_meta (key, value) VALUES ('separate_collection_and_land_trust_v1', 'complete')"
+        )
 
 
 def initialize_database(db_path: Path) -> None:

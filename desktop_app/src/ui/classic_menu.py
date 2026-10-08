@@ -55,7 +55,7 @@ CLASSIC_MENU_GROUPS = (
             ClassicMenuItem(6, "Print Transaction Log", "financials"),
             ClassicMenuItem(7, "Close a Month", "financials"),
             ClassicMenuItem(8, "Add, Delete, or Rename Account", "financials"),
-            ClassicMenuItem(9, "Record an Earlier Transaction", "financials"),
+            ClassicMenuItem(9, "Recode an Earlier Transaction", "financials"),
             ClassicMenuItem(10, "Print Year-End Summary", "financials"),
         ),
     ),

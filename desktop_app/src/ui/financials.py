@@ -17,12 +17,14 @@ from src.services.financial_service import (
     default_financial_date,
     delete_financial_account,
     post_financial_transaction,
+    recode_financial_transaction,
     rename_financial_account,
     render_budget_report_pdf,
     render_monthly_financial_report_pdf,
     render_transaction_log_pdf,
     render_year_end_financial_report_pdf,
     update_financial_budget,
+    update_financial_budget_distribution,
 )
 
 
@@ -35,6 +37,7 @@ class FinancialsFrame(ttk.Frame):
         self.year_var = tk.StringVar(value=initial_year)
         self.month_var = tk.StringVar(value=str(active_fiscal_month(db_path, initial_year)))
         self.account_var = tk.StringVar()
+        self.counter_account_var = tk.StringVar()
         self.date_var = tk.StringVar(value=default_financial_date())
         self.type_var = tk.StringVar(value="Expense")
         self.amount_var = tk.StringVar()
@@ -42,6 +45,8 @@ class FinancialsFrame(ttk.Frame):
         self.memo_var = tk.StringVar()
         self.reference_var = tk.StringVar()
         self.check_var = tk.StringVar()
+        self.recode_number_var = tk.StringVar()
+        self.recode_account_var = tk.StringVar()
         self.selected_account_code: str | None = None
         self.new_account_code_var = tk.StringVar()
         self.new_account_name_var = tk.StringVar()
@@ -50,6 +55,7 @@ class FinancialsFrame(ttk.Frame):
         self.next_fiscal_year_var = tk.StringVar(value=str(int(initial_year) + 1))
         self.monthly_budget_var = tk.StringVar()
         self.yearly_budget_var = tk.StringVar()
+        self.transaction_search_var = tk.StringVar()
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
@@ -143,7 +149,13 @@ class FinancialsFrame(ttk.Frame):
             self.account_tree.column(name, width=width, anchor="w")
         self.account_tree.grid(row=1, column=0, sticky="nsew")
         self.account_tree.bind("<<TreeviewSelect>>", self._on_account_select)
-        ttk.Label(left, text="Transactions for selected month", style="Section.TLabel").grid(row=2, column=0, sticky="w", pady=(12, 8))
+        transaction_search = ttk.Frame(left, style="App.TFrame")
+        transaction_search.grid(row=2, column=0, sticky="ew", pady=(12, 8))
+        transaction_search.columnconfigure(1, weight=1)
+        ttk.Label(transaction_search, text="Transactions", style="Section.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Entry(transaction_search, textvariable=self.transaction_search_var).grid(row=0, column=1, sticky="ew", padx=(0, 8))
+        ttk.Button(transaction_search, text="Search All", command=self.search_transactions).grid(row=0, column=2, padx=(0, 8))
+        ttk.Button(transaction_search, text="Selected Month", command=self.refresh_month).grid(row=0, column=3)
         self.transaction_tree = ttk.Treeview(
             left,
             columns=("number", "date", "type", "account", "amount", "payee"),
@@ -164,7 +176,8 @@ class FinancialsFrame(ttk.Frame):
 
         ttk.Label(right, text="Enter transaction", style="Section.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
         fields = [
-            ("Account code", self.account_var),
+            ("Main account", self.account_var),
+            ("Funds / other account", self.counter_account_var),
             ("Date", self.date_var),
             ("Type", self.type_var),
             ("Amount", self.amount_var),
@@ -175,7 +188,13 @@ class FinancialsFrame(ttk.Frame):
         ]
         for idx, (label, variable) in enumerate(fields, start=1):
             ttk.Label(right, text=label).grid(row=idx, column=0, sticky="w", padx=(0, 8), pady=6)
-            if label == "Type":
+            if label in {"Main account", "Funds / other account"}:
+                widget = ttk.Combobox(right, textvariable=variable, values=[], state="readonly")
+                if label == "Main account":
+                    self.main_account_box = widget
+                else:
+                    self.counter_account_box = widget
+            elif label == "Type":
                 widget = ttk.Combobox(
                     right,
                     textvariable=variable,
@@ -189,7 +208,20 @@ class FinancialsFrame(ttk.Frame):
         action_row = ttk.Frame(right, style="App.TFrame")
         action_row.grid(row=len(fields) + 1, column=0, columnspan=2, sticky="ew", pady=(12, 12))
         ttk.Button(action_row, text="Post Transaction", command=self.post_transaction).grid(row=0, column=0, sticky="ew", padx=(0, 8))
-        ttk.Button(action_row, text="Record Earlier Transaction", command=self.post_earlier_transaction).grid(row=0, column=1, sticky="ew")
+
+        recode_box = ttk.LabelFrame(right, text="Recode an earlier transaction")
+        recode_box.grid(row=len(fields) + 2, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        recode_box.columnconfigure(1, weight=1)
+        ttk.Label(recode_box, text="Transaction number").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(recode_box, textvariable=self.recode_number_var).grid(row=0, column=1, sticky="ew", pady=4)
+        ttk.Label(recode_box, text="Corrected account").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        self.recode_account_box = ttk.Combobox(
+            recode_box, textvariable=self.recode_account_var, values=[], state="readonly"
+        )
+        self.recode_account_box.grid(row=1, column=1, sticky="ew", pady=4)
+        ttk.Button(recode_box, text="Recode Transaction", command=self.recode_transaction).grid(
+            row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0)
+        )
 
         self.summary_text = tk.Text(
             right,
@@ -202,7 +234,7 @@ class FinancialsFrame(ttk.Frame):
             pady=14,
             height=12,
         )
-        self.summary_text.grid(row=len(fields) + 2, column=0, columnspan=2, sticky="nsew")
+        self.summary_text.grid(row=len(fields) + 3, column=0, columnspan=2, sticky="nsew")
         self.summary_text.configure(state="disabled")
 
         self._build_manage_tab(manage_tab)
@@ -241,9 +273,10 @@ class FinancialsFrame(ttk.Frame):
         ttk.Button(actions, text="Load Selected Account", command=self.load_selected_account).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(actions, text="Save Name / Category", command=self.save_account_edits).grid(row=0, column=1, padx=(0, 8))
         ttk.Button(actions, text="Update Budget", command=self.save_budget_edits).grid(row=0, column=2, padx=(0, 8))
-        ttk.Button(actions, text="Add New Account", command=self.add_account).grid(row=0, column=3, padx=(0, 8))
-        ttk.Button(actions, text="Delete Account", command=self.delete_account).grid(row=0, column=4)
-        ttk.Button(actions, text="Create Next Fiscal Year", command=self.create_next_fiscal_year).grid(row=0, column=5, padx=(8, 0))
+        ttk.Button(actions, text="Edit 12-Month Budget", command=self.edit_budget_distribution).grid(row=0, column=3, padx=(0, 8))
+        ttk.Button(actions, text="Add New Account", command=self.add_account).grid(row=0, column=4, padx=(0, 8))
+        ttk.Button(actions, text="Delete Account", command=self.delete_account).grid(row=0, column=5)
+        ttk.Button(actions, text="Create Next Fiscal Year", command=self.create_next_fiscal_year).grid(row=0, column=6, padx=(8, 0))
 
     def _build_report_tab(self, parent: ttk.Frame) -> None:
         parent.columnconfigure(0, weight=1)
@@ -271,6 +304,16 @@ class FinancialsFrame(ttk.Frame):
             self.next_fiscal_year_var.set(str(int(year) + 1))
         month = int(self.month_var.get())
         accounts = self.repository.list_month_accounts(month, year)
+        account_codes = [str(row["account_code"]) for row in accounts]
+        self.main_account_box.configure(values=account_codes)
+        self.counter_account_box.configure(values=account_codes)
+        self.recode_account_box.configure(values=account_codes)
+        if self.account_var.get() not in account_codes:
+            self.account_var.set(account_codes[0] if account_codes else "")
+        if self.counter_account_var.get() not in account_codes or self.counter_account_var.get() == self.account_var.get():
+            self.counter_account_var.set(next((code for code in account_codes if code != self.account_var.get()), ""))
+        if self.recode_account_var.get() not in account_codes:
+            self.recode_account_var.set("")
         transactions = self.repository.list_month_transactions(month, year)
         summary = self.repository.month_summary(month, year)
 
@@ -290,20 +333,7 @@ class FinancialsFrame(ttk.Frame):
                 ),
             )
 
-        self.transaction_tree.delete(*self.transaction_tree.get_children())
-        for row in transactions:
-            self.transaction_tree.insert(
-                "",
-                "end",
-                values=(
-                    row["transaction_number"],
-                    row["transaction_date"] or "",
-                    row["transaction_type"] or "",
-                    row["account_code"] or "",
-                    f"${float(row['amount'] or 0):,.2f}",
-                    row["payee"] or "",
-                ),
-            )
+        self._fill_transaction_tree(transactions)
 
         self._set_summary(
             "\n".join(
@@ -316,6 +346,9 @@ class FinancialsFrame(ttk.Frame):
                     f"Net movement: ${summary['net']:,.2f}",
                     "",
                     "Select an account on the left to load its code into the entry form.",
+                    "For expenses, Main is the expense account and Other is the payment account.",
+                    "For revenue, Main is the revenue account and Other is the deposit account.",
+                    "For transfers, Main is the source and Other is the destination.",
                 ]
             )
         )
@@ -324,6 +357,30 @@ class FinancialsFrame(ttk.Frame):
         if children:
             self.account_tree.selection_set(children[0])
             self._on_account_select()
+
+    def _fill_transaction_tree(self, transactions: list[dict]) -> None:
+        self.transaction_tree.delete(*self.transaction_tree.get_children())
+        for row in transactions:
+            account_display = row.get("account_code") or ""
+            if row.get("source_account_code") and row.get("destination_account_code"):
+                account_display = f"{row['source_account_code']} > {row['destination_account_code']}"
+            self.transaction_tree.insert(
+                "",
+                "end",
+                values=(
+                    row["transaction_number"],
+                    row["transaction_date"] or "",
+                    row["transaction_type"] or "",
+                    account_display,
+                    f"${float(row['amount'] or 0):,.2f}",
+                    row["payee"] or "",
+                ),
+            )
+
+    def search_transactions(self) -> None:
+        rows = self.repository.search_transactions(self.transaction_search_var.get())
+        self._fill_transaction_tree(rows)
+        self._set_summary(f"{len(rows)} matching transaction(s) across all fiscal periods.")
 
     def _set_summary(self, text: str) -> None:
         self.summary_text.configure(state="normal")
@@ -336,6 +393,9 @@ class FinancialsFrame(ttk.Frame):
         if selected:
             self.selected_account_code = selected[0]
             self.account_var.set(self.selected_account_code)
+            if self.counter_account_var.get() == self.selected_account_code:
+                values = list(self.counter_account_box.cget("values"))
+                self.counter_account_var.set(next((code for code in values if code != self.selected_account_code), ""))
 
     def load_selected_account(self) -> None:
         if not self.account_var.get().strip():
@@ -512,12 +572,6 @@ class FinancialsFrame(ttk.Frame):
         self._open_created_file(pdf_output, "Year-end report preview failed")
 
     def post_transaction(self) -> None:
-        self._post_transaction_common(earlier_mode=False)
-
-    def post_earlier_transaction(self) -> None:
-        self._post_transaction_common(earlier_mode=True)
-
-    def _post_transaction_common(self, earlier_mode: bool) -> None:
         try:
             amount = float(self.amount_var.get())
         except ValueError:
@@ -533,37 +587,80 @@ class FinancialsFrame(ttk.Frame):
             amount=amount,
             payee=self.payee_var.get().strip(),
             memo=self.memo_var.get().strip(),
+            counter_account_code=self.counter_account_var.get().strip().upper(),
             reference_number=self.reference_var.get().strip(),
             check_number=self.check_var.get().strip(),
         )
-        if earlier_mode:
-            confirm = messagebox.askyesno(
-                "Record earlier transaction",
-                "\n".join(
-                    [
-                        f"Fiscal year: {self.year_var.get().strip()}",
-                        f"Fiscal month: {self.month_var.get()}",
-                        f"Transaction date: {request.transaction_date}",
-                        "",
-                        "This will post an earlier-dated transaction into the selected fiscal period.",
-                    ]
-                ),
-            )
-            if not confirm:
-                return
         try:
             transaction_number = post_financial_transaction(self.db_path, request)
         except Exception as exc:
             messagebox.showerror("Transaction failed", str(exc))
             return
 
-        title = "Earlier transaction posted" if earlier_mode else "Transaction posted"
-        messagebox.showinfo(title, f"Transaction #{transaction_number} was saved.")
+        messagebox.showinfo("Transaction posted", f"Transaction #{transaction_number} was saved to both accounts.")
         self.amount_var.set("")
         self.payee_var.set("")
         self.memo_var.set("")
         self.reference_var.set("")
         self.check_var.set("")
+        self.refresh_month()
+
+    def edit_budget_distribution(self) -> None:
+        account_code = self.account_var.get().strip().upper()
+        if not account_code:
+            messagebox.showerror("No account", "Select an account first.")
+            return
+        dialog = tk.Toplevel(self)
+        dialog.title(f"12-Month Budget — {account_code}")
+        dialog.transient(self.winfo_toplevel())
+        dialog.grab_set()
+        frame = ttk.Frame(dialog, padding=16)
+        frame.grid(row=0, column=0, sticky="nsew")
+        values: list[tk.StringVar] = []
+        monthly_rows = {row["fiscal_month"]: row for row in self.repository.list_account_months(account_code, self.year_var.get().strip())}
+        for month in range(1, 13):
+            ttk.Label(frame, text=f"Month {month}").grid(row=(month - 1) % 6, column=((month - 1) // 6) * 2, sticky="w", padx=(0, 8), pady=5)
+            variable = tk.StringVar(value=f"{float(monthly_rows.get(month, {}).get('monthly_budget', 0) or 0):.2f}")
+            values.append(variable)
+            ttk.Entry(frame, textvariable=variable, width=12).grid(row=(month - 1) % 6, column=((month - 1) // 6) * 2 + 1, pady=5, padx=(0, 16))
+
+        def save() -> None:
+            try:
+                amounts = [float(variable.get()) for variable in values]
+                update_financial_budget_distribution(
+                    self.db_path, account_code, self.year_var.get().strip(), amounts
+                )
+            except Exception as exc:
+                messagebox.showerror("Budget distribution failed", str(exc), parent=dialog)
+                return
+            dialog.destroy()
+            self.refresh_month()
+            messagebox.showinfo("Budget updated", f"The 12-month budget totals ${sum(amounts):,.2f}.")
+
+        ttk.Button(frame, text="Save 12-Month Budget", command=save).grid(
+            row=6, column=0, columnspan=4, sticky="ew", pady=(12, 0)
+        )
+
+    def recode_transaction(self) -> None:
+        number = self.recode_number_var.get().strip()
+        account = self.recode_account_var.get().strip().upper()
+        if not messagebox.askyesno(
+            "Recode transaction",
+            f"Move transaction {number or '(blank)'} to account {account or '(blank)'}?\n\n"
+            "The original transaction remains in the audit trail.",
+        ):
+            return
+        try:
+            correction_number = recode_financial_transaction(self.db_path, number, account)
+        except Exception as exc:
+            messagebox.showerror("Recode failed", str(exc))
+            return
+        messagebox.showinfo(
+            "Transaction recoded",
+            f"Correction transaction #{correction_number} was saved.",
+        )
+        self.recode_number_var.set("")
+        self.recode_account_var.set("")
         self.refresh_month()
 
     def close_month(self) -> None:

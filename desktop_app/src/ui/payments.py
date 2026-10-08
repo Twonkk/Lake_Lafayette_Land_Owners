@@ -1,8 +1,10 @@
 import tkinter as tk
+from collections.abc import Callable
 from pathlib import Path
 from tkinter import messagebox, ttk
 
 from src.db.repositories import OwnerRepository
+from src.runtime import open_with_default_app
 from src.services.payment_service import (
     LotAllocation,
     PAYMENT_CATEGORY_FIELDS,
@@ -12,14 +14,21 @@ from src.services.payment_service import (
     default_paid_through,
     default_payment_date,
     post_lot_payment,
+    render_payment_session_deposit_pdf,
     validate_lot_allocation,
 )
 
 
 class PaymentsFrame(ttk.Frame):
-    def __init__(self, parent: tk.Misc, db_path: Path) -> None:
+    def __init__(
+        self,
+        parent: tk.Misc,
+        db_path: Path,
+        on_open_cards: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__(parent, style="App.TFrame")
         self.db_path = db_path
+        self.on_open_cards = on_open_cards
         self.repository = OwnerRepository(db_path)
         self.search_var = tk.StringVar()
         self.only_due_var = tk.BooleanVar(value=True)
@@ -36,6 +45,8 @@ class PaymentsFrame(ttk.Frame):
         self.lot_category_balances: dict[str, dict[str, float]] = {}
         self.lot_paid_through: dict[str, str] = {}
         self.selected_lots: set[str] = set()
+        self.session_id: int | None = None
+        self.session_var = tk.StringVar(value="No payments in the current session")
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
@@ -95,6 +106,10 @@ class PaymentsFrame(ttk.Frame):
             variable=self.only_due_var,
             command=self.run_search,
         ).grid(row=1, column=1, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Label(search_row, textvariable=self.session_var).grid(row=2, column=1, sticky="w", pady=(8, 0))
+        ttk.Button(search_row, text="Finish Session / Open Deposit Slip", command=self.finish_session).grid(
+            row=2, column=2, sticky="ew", pady=(8, 0)
+        )
 
         split = ttk.Panedwindow(parent, orient="horizontal")
         split.grid(row=2, column=0, sticky="nsew")
@@ -506,7 +521,7 @@ class PaymentsFrame(ttk.Frame):
             content,
             text=(
                 "dBase rule: delinquent assessment is the only category allowed to exceed "
-                "its displayed category balance. The total cannot exceed the lot balance."
+                "its displayed category balance. A total overpayment is allowed only when the owner has one lot."
             ),
             wraplength=560,
             justify="left",
@@ -534,6 +549,7 @@ class PaymentsFrame(ttk.Frame):
                 validate_lot_allocation(
                     allocation,
                     self._lot_record_for_validation(lot_number),
+                    allow_single_lot_credit=len(self.lot_balances) == 1,
                 )
             except ValueError as exc:
                 messagebox.showerror("Invalid distribution", str(exc), parent=dialog)
@@ -674,6 +690,7 @@ class PaymentsFrame(ttk.Frame):
             allocations=allocations,
             check_number=self.check_var.get().strip(),
             note_text=self.note_var.get().strip(),
+            session_id=self.session_id,
         )
 
         confirm = messagebox.askyesno(
@@ -708,6 +725,9 @@ class PaymentsFrame(ttk.Frame):
             messagebox.showerror("Payment failed", str(exc))
             return
 
+        self.session_id = result.session_id
+        self.session_var.set(f"Payment session #{result.session_id} is open")
+
         messagebox.showinfo(
             "Payment posted",
             "\n".join(
@@ -728,3 +748,32 @@ class PaymentsFrame(ttk.Frame):
             if owner_code in children:
                 self.owner_tree.selection_set(owner_code)
                 self._load_owner(owner_code)
+        if result.new_owner_total <= 0 and self.on_open_cards is not None:
+            if messagebox.askyesno(
+                "Owner is eligible for ID cards",
+                "This owner's balance is now current. Would you like to open the ID card screen?",
+            ):
+                self.on_open_cards()
+
+    def finish_session(self) -> None:
+        if self.session_id is None:
+            messagebox.showinfo("No open session", "Post at least one payment before creating a deposit slip.")
+            return
+        session_id = self.session_id
+        try:
+            output = render_payment_session_deposit_pdf(
+                self.db_path,
+                session_id,
+                self.db_path.parent / "generated_reports",
+                close_session=True,
+            )
+            open_with_default_app(output)
+        except Exception as exc:
+            messagebox.showerror("Deposit slip failed", str(exc))
+            return
+        self.session_id = None
+        self.session_var.set("No payments in the current session")
+        messagebox.showinfo(
+            "Payment session complete",
+            f"Session #{session_id} was closed and its deposit slip was created.",
+        )

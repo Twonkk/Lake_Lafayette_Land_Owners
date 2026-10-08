@@ -3,7 +3,8 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from src.services.pdf_service import pdf_runtime_available
-from src.services.utility_service import run_data_health_checks
+from src.runtime import open_with_default_app
+from src.services.utility_service import render_migration_readiness_pdf, run_data_health_checks
 
 
 class UtilitiesFrame(ttk.Frame):
@@ -48,6 +49,9 @@ class UtilitiesFrame(ttk.Frame):
         )
         ttk.Button(actions, text="Check for Updates", command=self.check_updates_callback).grid(
             row=1, column=2, sticky="w", padx=(8, 0), pady=(8, 0)
+        )
+        ttk.Button(actions, text="Open Migration Readiness PDF", command=self.open_readiness_pdf).grid(
+            row=2, column=0, columnspan=3, sticky="ew", pady=(8, 0)
         )
 
         ttk.Label(
@@ -112,3 +116,13 @@ class UtilitiesFrame(ttk.Frame):
         self.output.delete("1.0", "end")
         self.output.insert("1.0", "\n".join(lines))
         self.output.configure(state="disabled")
+
+    def open_readiness_pdf(self) -> None:
+        try:
+            output = render_migration_readiness_pdf(
+                self.db_path,
+                self.db_path.parent / "generated_reports",
+            )
+            open_with_default_app(output)
+        except Exception as exc:
+            messagebox.showerror("Migration readiness report failed", str(exc))

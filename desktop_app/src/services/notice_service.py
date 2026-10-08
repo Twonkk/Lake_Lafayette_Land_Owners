@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 import re
 
+from pypdf import PdfReader, PdfWriter
 from reportlab.lib.pagesizes import LETTER
 from reportlab.pdfgen import canvas
 
 from src.services.pdf_service import build_pdf_path
+from src.db.connection import get_connection
 
 
 @dataclass(slots=True)
@@ -19,7 +22,7 @@ class NoticeLotLine:
     current_assessment: float
     current_interest: float
     total_due: float
-    collection_flag: str
+    county_land_trust_flag: str
     freeze_flag: str
 
 
@@ -48,15 +51,17 @@ class NoticeBatch:
 
 
 def should_omit_notice(owner: NoticeOwner, lien_only: bool) -> bool:
-    if owner.last_name in {"LL COMPANY", "ASSOCIATION"}:
+    last_name = owner.last_name.strip().upper()
+    address = owner.address.strip().upper()
+    if last_name in {"LL CO", "LL CO.", "LL COMPANY", "ASSOCIATION"}:
         return True
-    if owner.address in {"UNKNOWN", "DECEASED"}:
+    if address in {"UNKNOWN", "DECEASED"}:
         return True
-    if owner.hold_mail_flag == "Y":
+    if owner.hold_mail_flag.strip().upper() == "Y":
         return True
-    if owner.current_flag not in {"T", "Y", "True", "TRUE", ""}:
+    if owner.current_flag.strip().upper() not in {"T", "Y", "TRUE", ""}:
         return True
-    if lien_only and owner.lien_flag != "Y":
+    if lien_only and owner.lien_flag.strip().upper() != "Y":
         return True
     return False
 
@@ -66,13 +71,32 @@ def owner_display_name(owner: NoticeOwner) -> str:
 
 
 def owner_notice_total(owner: NoticeOwner) -> float:
+    billable_lots = [lot for lot in owner.lots if lot.county_land_trust_flag != "Y"]
     if any(lot.freeze_flag == "Y" for lot in owner.lots):
-        return round(sum(lot.current_assessment for lot in owner.lots), 2)
-    return round(sum(lot.total_due for lot in owner.lots), 2)
+        return round(sum(lot.current_assessment for lot in billable_lots), 2)
+    return round(sum(lot.total_due for lot in billable_lots), 2)
 
 
-def owner_has_collection_lots(owner: NoticeOwner) -> bool:
-    return any(lot.collection_flag == "Y" for lot in owner.lots)
+def owner_has_county_land_trust_lots(owner: NoticeOwner) -> bool:
+    return any(lot.county_land_trust_flag == "Y" for lot in owner.lots)
+
+
+def default_notice_season_label(db_path: Path) -> str:
+    with get_connection(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT TRIM(COALESCE(season, '')) AS season,
+                   TRIM(COALESCE(year, '')) AS year
+            FROM legacy_system_history
+            WHERE TRIM(COALESCE(season, '')) <> ''
+               OR TRIM(COALESCE(year, '')) <> ''
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    if row is None:
+        return str(datetime.now().year)
+    return " ".join(part for part in [row["season"], row["year"]] if part).strip()
 
 
 def build_notice_batches(owners: list[NoticeOwner], batch_size: int) -> list[NoticeBatch]:
@@ -105,8 +129,9 @@ def render_notice_batch_pdfs(
     batch_size: int,
     output_dir: Path,
     season_label: str,
+    after_batch: Callable[[NoticeBatch, int, Path], None] | None = None,
 ) -> list[Path]:
-    """Render every owner across one multi-page PDF per configured batch."""
+    """Render each batch in order, optionally pausing through a progress callback."""
     batches = build_notice_batches(owners, batch_size)
     created_files: list[Path] = []
     batch_count = len(batches)
@@ -117,17 +142,48 @@ def render_notice_batch_pdfs(
             f"assessment_notices_batch_{batch.batch_number:03d}_"
             f"{start_name}_to_{end_name}"
         )
-        created_files.append(
-            render_notice_pdf(
-                owners=batch.owners,
-                output_dir=output_dir,
-                season_label=(
-                    f"{season_label} - Batch {batch.batch_number} of {batch_count}"
-                ),
-                file_stem=file_stem,
-            )
+        output_path = render_notice_pdf(
+            owners=batch.owners,
+            output_dir=output_dir,
+            season_label=(
+                f"{season_label} - Batch {batch.batch_number} of {batch_count}"
+            ),
+            file_stem=file_stem,
         )
+        created_files.append(output_path)
+        if after_batch is not None:
+            after_batch(batch, batch_count, output_path)
     return created_files
+
+
+def merge_notice_batch_pdfs(
+    batch_files: Sequence[Path],
+    output_dir: Path,
+    season_label: str,
+) -> Path:
+    """Merge completed batch PDFs into one complete notice-run document."""
+    if not batch_files:
+        raise ValueError("No completed notice batches were provided to combine.")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = build_pdf_path(output_dir, f"assessment_notices_complete_run_{timestamp}")
+    writer = PdfWriter()
+    for batch_file in batch_files:
+        if not batch_file.is_file():
+            raise FileNotFoundError(f"Notice batch PDF was not found: {batch_file}")
+        reader = PdfReader(str(batch_file))
+        for page in reader.pages:
+            writer.add_page(page)
+    writer.add_metadata(
+        {
+            "/Title": f"Assessment Notices - {season_label}",
+            "/Author": "Lake Lafayette Landowners Association",
+            "/Subject": f"Complete notice run from {len(batch_files)} batch file(s)",
+        }
+    )
+    with output_path.open("wb") as output_stream:
+        writer.write(output_stream)
+    return output_path
 
 
 def build_notice_file_stem(owner: NoticeOwner, timestamp: datetime | None = None) -> str:
@@ -142,11 +198,12 @@ def build_notice_file_stem(owner: NoticeOwner, timestamp: datetime | None = None
 def _notice_table_lines(owner: NoticeOwner) -> tuple[list[str], float, bool, bool]:
     has_freeze = any(lot.freeze_flag == "Y" for lot in owner.lots)
     due_total = owner_notice_total(owner)
-    collection_note = owner_has_collection_lots(owner)
+    collection_note = owner_has_county_land_trust_lots(owner)
+    billable_lots = [lot for lot in owner.lots if lot.county_land_trust_flag != "Y"]
     lot_rows = []
     for lot in owner.lots:
         total_display = lot.current_assessment if has_freeze else lot.total_due
-        marker = "**" if collection_note and lot.collection_flag == "Y" else ""
+        marker = "**" if lot.county_land_trust_flag == "Y" else ""
         lot_rows.append(
             f"{lot.lot_number:<6}{marker:<3}"
             f"{lot.delinquent_assessment:>12.2f}"
@@ -158,10 +215,10 @@ def _notice_table_lines(owner: NoticeOwner) -> tuple[list[str], float, bool, boo
 
     total_line = (
         f"{'':<9}"
-        f"{sum(lot.delinquent_assessment for lot in owner.lots):>12.2f}"
-        f"{sum(lot.delinquent_interest for lot in owner.lots):>12.2f}"
-        f"{sum(lot.current_assessment for lot in owner.lots):>12.2f}"
-        f"{sum(lot.current_interest for lot in owner.lots):>12.2f}"
+        f"{sum(lot.delinquent_assessment for lot in billable_lots):>12.2f}"
+        f"{sum(lot.delinquent_interest for lot in billable_lots):>12.2f}"
+        f"{sum(lot.current_assessment for lot in billable_lots):>12.2f}"
+        f"{sum(lot.current_interest for lot in billable_lots):>12.2f}"
         f"{due_total:>12.2f}"
     )
     lines = [
@@ -188,49 +245,93 @@ def render_notice_pdf(
 
     for owner in owners:
         table_lines, due_total, has_freeze, collection_note = _notice_table_lines(owner)
+        table_header = table_lines[:2]
+        lot_rows = table_lines[2:-2]
+        table_total = table_lines[-2:]
         owner_name = owner_display_name(owner).upper()
         owner_address = (owner.address or "").upper()
         owner_city = (owner.city or "").upper()
         owner_state = (owner.state or "").upper()
         city_state_zip = f"{owner_city}    {owner_state}  {owner.zip_code}".strip()
+        first_page_capacity = 18
+        continuation_capacity = 30
+        page_count = 1
+        if len(lot_rows) > first_page_capacity:
+            page_count += (len(lot_rows) - first_page_capacity + continuation_capacity - 1) // continuation_capacity
 
-        pdf.setFont("Courier", 14)
-        top_y = page_height - (0.55 * 72)
-        pdf.drawString(0.45 * 72, top_y, owner_name)
-        pdf.drawString(0.45 * 72, top_y - 18, owner_address)
-        pdf.drawString(0.45 * 72, top_y - 36, city_state_zip)
-        pdf.drawString(4.9 * 72, page_height - (0.58 * 72), owner.owner_code)
-        pdf.drawString(5.55 * 72, page_height - (0.95 * 72), f"Due: $ {due_total:,.2f}")
+        remaining_rows = list(lot_rows)
+        owner_page = 1
+        while owner_page == 1 or remaining_rows:
+            row_capacity = first_page_capacity if owner_page == 1 else continuation_capacity
+            page_rows = remaining_rows[:row_capacity]
+            remaining_rows = remaining_rows[row_capacity:]
+            is_last_page = not remaining_rows
 
-        pdf.setFont("Courier", 13)
-        table_y = page_height - (4.65 * 72)
-        line_step = 15.5
-        for line in table_lines:
-            pdf.drawString(0.22 * 72, table_y, line)
-            table_y -= line_step
+            top_y = page_height - (0.55 * 72)
+            if owner_page == 1:
+                pdf.setFont("Courier", 14)
+                pdf.drawString(0.45 * 72, top_y, owner_name)
+                pdf.drawString(0.45 * 72, top_y - 18, owner_address)
+                pdf.drawString(0.45 * 72, top_y - 36, city_state_zip)
+                table_y = page_height - (4.65 * 72)
+            else:
+                pdf.setFont("Courier-Bold", 13)
+                pdf.drawString(0.45 * 72, top_y, "ASSESSMENT NOTICE - CONTINUED")
+                pdf.setFont("Courier", 11)
+                pdf.drawString(0.45 * 72, top_y - 20, owner_name)
+                table_y = page_height - (1.55 * 72)
 
-        pdf.setFont("Courier", 12)
-        pdf.drawString(0.45 * 72, 1.2 * 72, season_label)
-        pdf.setFont("Courier-Bold", 14)
-        pdf.drawString(0.45 * 72, 0.8 * 72, f"PLEASE REMIT PAYMENT IN THE AMOUNT OF ${due_total:,.2f}")
-
-        note_y = 0.45 * 72
-        pdf.setFont("Courier", 12)
-        if collection_note:
-            pdf.drawString(
-                0.45 * 72,
-                note_y,
-                'Lots marked with "**" are in collection / county-taken status and need special follow-up language.',
+            pdf.setFont("Courier", 12)
+            pdf.drawString(4.9 * 72, page_height - (0.58 * 72), owner.owner_code)
+            pdf.drawString(5.55 * 72, page_height - (0.95 * 72), f"Due: $ {due_total:,.2f}")
+            pdf.setFont("Courier", 8)
+            pdf.drawRightString(
+                page_width - (0.45 * 72),
+                page_height - (0.4 * 72),
+                f"Page {owner_page} of {page_count}",
             )
-            note_y -= 12
-        if has_freeze:
-            pdf.drawString(
-                0.45 * 72,
-                note_y,
-                "Freeze note: this notice shows current assessment totals for frozen accounts.",
-            )
 
-        pdf.showPage()
+            pdf.setFont("Courier", 10.5)
+            line_step = 13.2
+            for line in [*table_header, *page_rows, *(table_total if is_last_page else [])]:
+                pdf.drawString(0.35 * 72, table_y, line)
+                table_y -= line_step
+
+            if not is_last_page:
+                pdf.setFont("Courier-Bold", 10)
+                pdf.drawString(0.45 * 72, max(table_y - 8, 1.1 * 72), "LOT LIST CONTINUES ON NEXT PAGE")
+            else:
+                pdf.setFont("Courier", 10)
+                pdf.drawString(0.45 * 72, 1.7 * 72, season_label)
+                pdf.setFont("Courier-Bold", 12)
+                pdf.drawString(
+                    0.45 * 72,
+                    1.35 * 72,
+                    f"PLEASE REMIT PAYMENT IN THE AMOUNT OF ${due_total:,.2f}",
+                )
+
+                note_lines: list[str] = []
+                if collection_note:
+                    note_lines.extend(
+                        [
+                            'LOTS MARKED WITH "**" ARE NO LONGER OWNED BY YOU.',
+                            "THEY HAVE BEEN TAKEN OVER BY LAFAYETTE COUNTY FOR NON-PAYMENT OF TAXES.",
+                            "CONTACT LAFAYETTE COUNTY OFFICES IF YOU WANT TO RECLAIM THIS PROPERTY.",
+                            "ASSESSMENTS ON THESE LOTS ARE NOT OWED UNLESS YOU RECLAIM THE PROPERTY.",
+                        ]
+                    )
+                if has_freeze:
+                    note_lines.append(
+                        "Freeze note: this notice shows current assessment totals for frozen accounts."
+                    )
+                note_y = 1.0 * 72
+                pdf.setFont("Courier", 8.5)
+                for warning_line in note_lines:
+                    pdf.drawString(0.45 * 72, note_y, warning_line)
+                    note_y -= 9.5
+
+            pdf.showPage()
+            owner_page += 1
 
     pdf.save()
     return output_path

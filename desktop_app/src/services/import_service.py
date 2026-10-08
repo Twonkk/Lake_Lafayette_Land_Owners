@@ -4,7 +4,11 @@ from pathlib import Path
 import shutil
 
 from src.db.connection import get_connection
-from src.importers.dbf_importer import import_legacy_directory, import_legacy_financials_only
+from src.importers.dbf_importer import (
+    import_legacy_directory,
+    import_legacy_financials_only,
+    import_owner_recovery_candidates_only,
+)
 
 
 @dataclass(slots=True)
@@ -21,6 +25,7 @@ class ImportResult:
     legacy_id_history_imported: int = 0
     legacy_collection_lots_imported: int = 0
     legacy_system_history_imported: int = 0
+    placeholder_owners_imported: int = 0
     backup_path: str = ""
 
 
@@ -45,7 +50,10 @@ NATIVE_ACTIVITY_LABELS = {
     "property_sales": "Property sales or reversals",
     "boat_sticker_purchases": "Boat sticker purchases",
     "id_card_issues": "ID cards issued",
+    "id_card_completion_events": "ID card orders marked filled",
+    "encumbrance_events": "Lien or collection changes",
     "financial_transactions": "Financial transactions",
+    "migration_review_decisions": "Migration review decisions",
 }
 
 
@@ -65,6 +73,9 @@ def native_activity_counts(sqlite_path: Path) -> dict[str, int]:
         "property_sales",
         "boat_sticker_purchases",
         "id_card_issues",
+        "id_card_completion_events",
+        "encumbrance_events",
+        "migration_review_decisions",
     ]
     with get_connection(sqlite_path) as connection:
         counts = {
@@ -151,6 +162,7 @@ def run_legacy_import(
         legacy_id_history_imported=result.get("legacy_id_history_imported", 0),
         legacy_collection_lots_imported=result.get("legacy_collection_lots_imported", 0),
         legacy_system_history_imported=result.get("legacy_system_history_imported", 0),
+        placeholder_owners_imported=result.get("placeholder_owners_imported", 0),
         backup_path=str(backup_path or ""),
     )
 
@@ -174,3 +186,19 @@ def backfill_financial_import_if_empty(source_dir: Path, sqlite_path: Path) -> I
         financial_monthly_imported=result.get("financial_monthly_imported", 0),
         financial_transactions_imported=result.get("financial_transactions_imported", 0),
     )
+
+
+def backfill_owner_recovery_candidates_if_empty(source_dir: Path, sqlite_path: Path) -> int:
+    """Add review candidates to an existing import without replacing app records."""
+    if not (source_dir / "ONERFILE.DBF").exists():
+        return 0
+    with get_connection(sqlite_path) as connection:
+        existing = int(connection.execute("SELECT COUNT(*) FROM legacy_owner_candidates").fetchone()[0])
+        placeholders = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM owners WHERE status = 'IMPORT REVIEW REQUIRED'"
+            ).fetchone()[0]
+        )
+    if existing or not placeholders:
+        return 0
+    return import_owner_recovery_candidates_only(source_dir, sqlite_path)

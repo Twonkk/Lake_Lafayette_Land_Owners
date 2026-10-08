@@ -1,5 +1,5 @@
 #define MyAppName "Lake Lafayette Landowners Association"
-#define MyAppVersion "0.1.25"
+#define MyAppVersion "0.1.32"
 #define MyAppPublisher "Lake Lafayette Landowners Association"
 #define MyAppExeName "LakeLotManager.exe"
 

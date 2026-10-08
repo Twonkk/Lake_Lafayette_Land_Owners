@@ -80,7 +80,7 @@ class OwnerRepository:
                     delinquent_interest,
                     current_interest,
                     lien_flag,
-                    collection_flag,
+                    county_land_trust_flag,
                     freeze_flag,
                     paid_through,
                     development_status,
@@ -108,10 +108,27 @@ class OwnerRepository:
                 [owner_code],
             ).fetchall()
 
+            payments = connection.execute(
+                """
+                SELECT
+                    id,
+                    payment_date,
+                    total_owed,
+                    payment_amount,
+                    payment_form,
+                    check_number
+                FROM owner_payments
+                WHERE owner_code = ?
+                ORDER BY payment_date DESC, id DESC
+                """,
+                [owner_code],
+            ).fetchall()
+
         return {
             "owner": dict(owner),
             "lots": [dict(row) for row in lots],
             "notes": [dict(row) for row in notes],
+            "payments": [dict(row) for row in payments],
         }
 
     def counts(self) -> dict:
@@ -191,34 +208,47 @@ class PaymentRepository:
         sql = """
             SELECT
                 p.id,
-                p.created_at,
                 p.payment_date,
                 p.owner_code,
-                p.lot_number,
                 p.payment_amount,
+                p.total_owed,
                 p.payment_form,
                 p.check_number,
-                p.note_text,
-                p.previous_total_due,
-                p.new_total_due,
-                p.previous_owner_total,
-                p.new_owner_total,
-                p.backup_path,
                 o.last_name,
                 o.first_name
-            FROM payment_audit p
+            FROM owner_payments p
             LEFT JOIN owners o ON o.owner_code = p.owner_code
             WHERE
                 p.owner_code LIKE ?
-                OR p.lot_number LIKE ?
                 OR p.payment_date LIKE ?
                 OR p.check_number LIKE ?
+                OR p.payment_form LIKE ?
+                OR CASE UPPER(TRIM(COALESCE(p.payment_form, '')))
+                    WHEN '1' THEN 'Check'
+                    WHEN 'CK' THEN 'Check'
+                    WHEN '2' THEN 'Cash'
+                    WHEN 'CS' THEN 'Cash'
+                    WHEN '3' THEN 'Money Order'
+                    WHEN 'MO' THEN 'Money Order'
+                    WHEN '4' THEN 'Services'
+                    WHEN 'SV' THEN 'Services'
+                    WHEN '5' THEN 'Tax Sale Adjustment'
+                    WHEN 'TA' THEN 'Tax Sale Adjustment'
+                    WHEN '6' THEN 'Private Sale Adjustment'
+                    WHEN 'PA' THEN 'Private Sale Adjustment'
+                    WHEN '7' THEN 'Inheritance Adjustment'
+                    WHEN 'IA' THEN 'Inheritance Adjustment'
+                    WHEN '8' THEN 'Negotiated Adjustment'
+                    WHEN 'NA' THEN 'Negotiated Adjustment'
+                    ELSE p.payment_form
+                  END LIKE ?
                 OR o.last_name LIKE ?
                 OR o.first_name LIKE ?
-            ORDER BY p.created_at DESC, p.id DESC
+            ORDER BY p.payment_date DESC, p.id DESC
             LIMIT ?
         """
         params = [
+            search_term,
             search_term,
             search_term,
             search_term,
@@ -231,7 +261,7 @@ class PaymentRepository:
             rows = connection.execute(sql, params).fetchall()
         return [dict(row) for row in rows]
 
-    def get_history_detail(self, audit_id: int) -> dict | None:
+    def get_history_detail(self, payment_id: int) -> dict | None:
         with get_connection(self.db_path) as connection:
             row = connection.execute(
                 """
@@ -243,13 +273,55 @@ class PaymentRepository:
                     o.city,
                     o.state,
                     o.zip
-                FROM payment_audit p
+                FROM owner_payments p
                 LEFT JOIN owners o ON o.owner_code = p.owner_code
                 WHERE p.id = ?
                 """,
-                [audit_id],
+                [payment_id],
             ).fetchone()
-        return dict(row) if row is not None else None
+            if row is None:
+                return None
+
+            audit_rows = connection.execute(
+                """
+                SELECT
+                    created_at,
+                    lot_number,
+                    payment_amount,
+                    paid_through,
+                    paid_current_assessment,
+                    paid_current_interest,
+                    paid_delinquent_assessment,
+                    paid_delinquent_interest,
+                    previous_total_due,
+                    new_total_due,
+                    note_text,
+                    backup_path
+                FROM payment_audit
+                WHERE owner_code = ?
+                  AND payment_date = ?
+                  AND COALESCE(check_number, '') = COALESCE(?, '')
+                  AND payment_form = ?
+                ORDER BY id
+                """,
+                [
+                    row["owner_code"],
+                    row["payment_date"],
+                    row["check_number"],
+                    row["payment_form"],
+                ],
+            ).fetchall()
+
+        result = dict(row)
+        # Only attach granular rows when they account for this exact owner payment.
+        # This prevents same-day legacy or unrelated entries from being presented as
+        # though they belonged to the selected payment.
+        audit_total = round(sum(float(item["payment_amount"] or 0) for item in audit_rows), 2)
+        payment_total = round(float(row["payment_amount"] or 0), 2)
+        result["app_details"] = (
+            [dict(item) for item in audit_rows] if audit_total == payment_total else []
+        )
+        return result
 
 
 class NoticeRepository:
@@ -277,7 +349,7 @@ class NoticeRepository:
                 l.current_assessment,
                 l.current_interest,
                 l.total_due,
-                l.collection_flag,
+                l.county_land_trust_flag,
                 l.freeze_flag
             FROM owners o
             LEFT JOIN lots l ON l.owner_code = o.owner_code
@@ -321,7 +393,7 @@ class NoticeRepository:
                         current_assessment=float(row["current_assessment"] or 0),
                         current_interest=float(row["current_interest"] or 0),
                         total_due=float(row["total_due"] or 0),
-                        collection_flag=row["collection_flag"] or "",
+                        county_land_trust_flag=row["county_land_trust_flag"] or "",
                         freeze_flag=row["freeze_flag"] or "",
                     )
                 )
@@ -352,6 +424,26 @@ class FinancialRepository:
                 """
             ).fetchall()
         return [str(row["fiscal_year"]) for row in rows]
+
+    def search_transactions(self, query: str, limit: int = 1000) -> list[dict]:
+        term = f"%{query.strip()}%" if query.strip() else "%"
+        with get_connection(self.db_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT t.*, a.account_name
+                FROM financial_transactions t
+                LEFT JOIN financial_accounts a ON a.account_code = t.account_code
+                WHERE t.transaction_number LIKE ? OR t.transaction_date LIKE ?
+                   OR t.entry_date LIKE ? OR t.account_code LIKE ?
+                   OR t.source_account_code LIKE ? OR t.destination_account_code LIKE ?
+                   OR t.payee LIKE ? OR t.memo LIKE ? OR a.account_name LIKE ?
+                ORDER BY t.fiscal_year DESC, t.month_number DESC,
+                         CAST(t.transaction_number AS INTEGER) DESC, t.id DESC
+                LIMIT ?
+                """,
+                [term, term, term, term, term, term, term, term, term, limit],
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def list_month_accounts(self, fiscal_month: int, fiscal_year: str) -> list[dict]:
         with get_connection(self.db_path) as connection:
@@ -388,6 +480,18 @@ class FinancialRepository:
                 ORDER BY CAST(transaction_number AS INTEGER), id
                 """,
                 [fiscal_month, fiscal_year],
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_account_months(self, account_code: str, fiscal_year: str) -> list[dict]:
+        with get_connection(self.db_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM financial_monthly
+                WHERE account_code = ? AND COALESCE(fiscal_year, '') = ?
+                ORDER BY fiscal_month
+                """,
+                [account_code.strip().upper(), fiscal_year.strip()],
             ).fetchall()
         return [dict(row) for row in rows]
 

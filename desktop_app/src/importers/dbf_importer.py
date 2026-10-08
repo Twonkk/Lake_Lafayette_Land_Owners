@@ -52,7 +52,7 @@ def _parse_logical(raw: bytes) -> str | None:
     return text or None
 
 
-def _read_dbf(path: Path) -> list[dict]:
+def _read_dbf_records(path: Path, *, include_deleted: bool = False) -> list[dict]:
     if not path.exists():
         raise LegacyImportError(f"Missing legacy DBF file: {path}")
 
@@ -80,9 +80,12 @@ def _read_dbf(path: Path) -> list[dict]:
 
         handle.seek(header_length)
         records: list[dict] = []
-        for _ in range(record_count):
+        for record_number in range(1, record_count + 1):
             raw_record = handle.read(record_length)
-            if not raw_record or raw_record[0:1] == b"*":
+            if not raw_record:
+                continue
+            deleted = raw_record[0:1] == b"*"
+            if deleted and not include_deleted:
                 continue
 
             position = 1
@@ -103,9 +106,75 @@ def _read_dbf(path: Path) -> list[dict]:
                     value = _decode_text(raw_value)
 
                 parsed[name] = value
+            if include_deleted:
+                parsed["_deleted"] = "Y" if deleted else "N"
+                parsed["_record_number"] = record_number
             records.append(parsed)
 
     return records
+
+
+def _read_dbf(path: Path) -> list[dict]:
+    return _read_dbf_records(path)
+
+
+def _read_owner_recovery_candidates(source_dir: Path) -> list[dict]:
+    """Read visible and deleted owner rows that may explain a missing owner code."""
+    candidates: list[dict] = []
+    for filename in ("ONERFILE.DBF", "ONERFILE.BAK"):
+        path = source_dir / filename
+        if not path.exists():
+            continue
+        try:
+            rows = _read_dbf_records(path, include_deleted=True)
+        except (LegacyImportError, OSError, ValueError, struct.error):
+            continue
+        for row in rows:
+            row["_source_file"] = filename
+            candidates.append(row)
+    return candidates
+
+
+def _owner_recovery_row(row: dict) -> tuple:
+    return (
+        _owner_code(row.get("OWNR_CODE")),
+        _as_text(row.get("_source_file")) or "ONERFILE.DBF",
+        int(row.get("_record_number") or 0),
+        _as_text(row.get("_deleted")) or "N",
+        _as_text(row.get("LAST_NAME")),
+        _as_text(row.get("FIRST_NAME")),
+        _as_text(row.get("SECND_OWNR")),
+        int(row.get("NOTENUMBR")) if row.get("NOTENUMBR") else None,
+        _as_text(row.get("ADDRESS")),
+        _as_text(row.get("CITY")),
+        _as_text(row.get("STATE")),
+        _as_text(row.get("ZIP")),
+        _as_text(row.get("PHONE")),
+        _as_text(row.get("RESIDENT")),
+        _as_text(row.get("PLAT")),
+        _as_text(row.get("CURRENT")),
+        _parse_char_date(_as_text(row.get("SALE_DATE")) or ""),
+        _as_text(row.get("HOLD_MAIL")),
+        _as_text(row.get("INEL")),
+        _as_text(row.get("COLL")),
+        _parse_char_date(_as_text(row.get("COLLDATE")) or ""),
+        _as_text(row.get("LIEN")),
+        int(row.get("NUMBR_LOTS") or 0),
+        _as_text(row.get("LOT_NUMBER")),
+        _as_money(row.get("TOTAL_OWED")),
+    )
+
+
+OWNER_RECOVERY_INSERT = """
+    INSERT OR REPLACE INTO legacy_owner_candidates (
+        owner_code, source_file, source_record_number, deleted_flag,
+        last_name, first_name, secondary_owner_flag, note_number,
+        address, city, state, zip, phone, resident_flag, plat,
+        current_flag, sale_date, hold_mail_flag, ineligible_flag,
+        collection_flag, collection_date, lien_flag, number_lots,
+        primary_lot_number, total_owed
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"""
 
 
 def _as_money(value: object) -> float:
@@ -163,6 +232,7 @@ def import_legacy_directory(source_dir: Path, sqlite_path: Path) -> dict[str, in
     legacy_id_history = _read_dbf(source_dir / "IDFILE.DBF")
     legacy_collection_lots = _read_dbf(source_dir / "CLTRUST.DBF")
     legacy_system_history = _read_dbf(source_dir / "PERMFILE.DBF")
+    owner_recovery_candidates = _read_owner_recovery_candidates(source_dir)
     default_financial_year = _default_financial_year(financial_accounts, financial_transactions)
 
     started_at = datetime.now().isoformat(timespec="seconds")
@@ -182,14 +252,20 @@ def import_legacy_directory(source_dir: Path, sqlite_path: Path) -> dict[str, in
         ).lastrowid
 
         for table in [
+            "financial_transaction_legs",
+            "encumbrance_events",
+            "id_card_completion_events",
             "legacy_property_sales",
             "legacy_id_history",
             "legacy_collection_lots",
             "legacy_system_history",
+            "legacy_owner_candidates",
+            "migration_review_decisions",
             "property_sales",
             "payment_audit",
             "assessment_runs",
             "owner_payments",
+            "payment_sessions",
             "lot_payments",
             "notes",
             "lots",
@@ -270,6 +346,66 @@ def import_legacy_directory(source_dir: Path, sqlite_path: Path) -> dict[str, in
                 max(existing[22], candidate[22]),
             )
 
+        current_lot_summaries: dict[str, dict[str, object]] = {}
+        for row in lots:
+            owner_code = _owner_code(row.get("OWNR_CODE"))
+            if not owner_code or owner_code in owner_map:
+                continue
+            summary = current_lot_summaries.setdefault(
+                owner_code,
+                {"count": 0, "primary": None, "total": 0.0},
+            )
+            lot_number = _as_text(row.get("LOT_NUMBER"))
+            summary["count"] = int(summary["count"]) + 1
+            summary["total"] = _as_money(summary["total"]) + _as_money(row.get("TOT_DUE"))
+            if lot_number and (summary["primary"] is None or lot_number < str(summary["primary"])):
+                summary["primary"] = lot_number
+
+        referenced_owner_codes = {
+            code
+            for source_rows in (lots, owner_payments, lot_payments)
+            for row in source_rows
+            if (code := _owner_code(row.get("OWNR_CODE")))
+        }
+        placeholder_owner_codes = sorted(referenced_owner_codes - set(owner_map))
+        for owner_code in placeholder_owner_codes:
+            summary = current_lot_summaries.get(owner_code, {})
+            has_current_lots = bool(summary)
+            owner_map[owner_code] = (
+                owner_code,
+                "MISSING OWNER RECORD",
+                "",
+                None,
+                None,
+                "UNKNOWN",
+                "",
+                "",
+                "",
+                "",
+                "IMPORT REVIEW REQUIRED",
+                "N",
+                None,
+                "T" if has_current_lots else "F",
+                None,
+                "Y",
+                "Y",
+                "N",
+                None,
+                "N",
+                int(summary.get("count", 0)),
+                summary.get("primary"),
+                round(float(summary.get("total", 0) or 0), 2),
+            )
+
+        recovery_rows = []
+        for row in owner_recovery_candidates:
+            owner_code = _owner_code(row.get("OWNR_CODE"))
+            if owner_code not in placeholder_owner_codes:
+                continue
+            recovery_rows.append(_owner_recovery_row(row))
+
+        connection.executemany(OWNER_RECOVERY_INSERT, recovery_rows)
+
         owner_rows = list(owner_map.values())
 
         connection.executemany(
@@ -328,7 +464,8 @@ def import_legacy_directory(source_dir: Path, sqlite_path: Path) -> dict[str, in
                     _as_text(row.get("LAKEFRONT")),
                     _as_text(row.get("DOCK")),
                     _as_text(row.get("DEVEL_STAT")),
-                    _as_text(row.get("CLT")),
+                    "N",
+                    _as_text(row.get("CLT")) or "N",
                     _as_text(row.get("FREEZE")),
                     _as_money(row.get("APPVALUE")),
                     _as_money(row.get("ASSDVALUE")),
@@ -363,6 +500,7 @@ def import_legacy_directory(source_dir: Path, sqlite_path: Path) -> dict[str, in
                 dock_flag,
                 development_status,
                 collection_flag,
+                county_land_trust_flag,
                 freeze_flag,
                 appraised_value,
                 assessed_value,
@@ -373,7 +511,7 @@ def import_legacy_directory(source_dir: Path, sqlite_path: Path) -> dict[str, in
                 lien_book_page,
                 lien_book,
                 lien_page
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             lot_rows,
         )
@@ -575,6 +713,22 @@ def import_legacy_directory(source_dir: Path, sqlite_path: Path) -> dict[str, in
             # TRANSFIL has no fiscal-year column. The account's explicit dBase
             # fiscal year is authoritative; transaction dates are calendar dates.
             fiscal_year = account_year_map.get(account_code, default_financial_year)
+            transaction_type = (_as_text(row.get("TYPE")) or "").upper()
+            payment_method = (_as_text(row.get("HOWPAID")) or "").upper()
+            disposition = (_as_text(row.get("DISP")) or "").upper()
+            payment_account = {"CK": "WA", "PC": "WB"}.get(payment_method, "")
+            if transaction_type == "EX":
+                source_account_code = payment_account
+                destination_account_code = account_code
+            elif transaction_type == "RR":
+                source_account_code = account_code
+                destination_account_code = disposition
+            elif transaction_type == "TF":
+                source_account_code = account_code
+                destination_account_code = disposition
+            else:
+                source_account_code = account_code
+                destination_account_code = disposition
             transaction_rows.append(
                 (
                     _as_text(row.get("TRANSNMBR")),
@@ -590,11 +744,13 @@ def import_legacy_directory(source_dir: Path, sqlite_path: Path) -> dict[str, in
                     _as_text(row.get("REFNMBR")),
                     _as_text(row.get("CHKNMBR")),
                     _as_text(row.get("PARCHK")),
-                    _as_text(row.get("HOWPAID")),
+                    payment_method,
                     _as_text(row.get("PCTRANSNBR")),
-                    _as_text(row.get("DISP")),
-                    _as_text(row.get("TYPE")),
+                    disposition,
+                    transaction_type,
                     _as_text(row.get("TRANSTAT")),
+                    source_account_code or None,
+                    destination_account_code or None,
                 )
             )
         connection.executemany(
@@ -618,8 +774,10 @@ def import_legacy_directory(source_dir: Path, sqlite_path: Path) -> dict[str, in
                 disposition,
                 transaction_type,
                 status,
+                source_account_code,
+                destination_account_code,
                 source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'legacy')
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'legacy')
             """,
             transaction_rows,
         )
@@ -734,6 +892,7 @@ def import_legacy_directory(source_dir: Path, sqlite_path: Path) -> dict[str, in
 
     return {
         "owners_imported": len(owner_rows),
+        "placeholder_owners_imported": len(placeholder_owner_codes),
         "lots_imported": len(lot_rows),
         "owner_payments_imported": len(owner_payment_rows),
         "lot_payments_imported": len(lot_payment_rows),
@@ -746,6 +905,28 @@ def import_legacy_directory(source_dir: Path, sqlite_path: Path) -> dict[str, in
         "legacy_collection_lots_imported": len(legacy_collection_rows),
         "legacy_system_history_imported": len(legacy_system_rows),
     }
+
+
+def import_owner_recovery_candidates_only(source_dir: Path, sqlite_path: Path) -> int:
+    """Backfill deleted/backup owner candidates without replacing any app records."""
+    source_dir = source_dir.resolve()
+    candidates = _read_owner_recovery_candidates(source_dir)
+    with closing(sqlite3.connect(sqlite_path)) as connection:
+        connection.row_factory = sqlite3.Row
+        placeholder_codes = {
+            row[0]
+            for row in connection.execute(
+                "SELECT owner_code FROM owners WHERE status = 'IMPORT REVIEW REQUIRED'"
+            ).fetchall()
+        }
+        recovery_rows = [
+            _owner_recovery_row(row)
+            for row in candidates
+            if _owner_code(row.get("OWNR_CODE")) in placeholder_codes
+        ]
+        connection.executemany(OWNER_RECOVERY_INSERT, recovery_rows)
+        connection.commit()
+    return len(recovery_rows)
 
 
 def import_legacy_financials_only(source_dir: Path, sqlite_path: Path) -> dict[str, int]:

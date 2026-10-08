@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 
 from reportlab.lib import colors
+from reportlab.lib.pagesizes import LETTER, landscape
 from reportlab.lib.units import inch
 from reportlab.platypus import TableStyle
 
@@ -30,6 +31,7 @@ class FinancialTransactionRequest:
     amount: float
     payee: str
     memo: str
+    counter_account_code: str = ""
     reference_number: str = ""
     check_number: str = ""
     payment_method: str = ""
@@ -128,30 +130,34 @@ def post_financial_transaction(db_path: Path, request: FinancialTransactionReque
     if not fiscal_year:
         raise ValueError("Fiscal year is required.")
 
+    main_account_code = request.account_code.strip().upper()
+    counter_account_code = request.counter_account_code.strip().upper()
+    if not main_account_code or not counter_account_code:
+        raise ValueError("Choose both the main account and the funds/payment account.")
+    if main_account_code == counter_account_code:
+        raise ValueError("The two accounts must be different.")
+
     _make_backup(db_path, "transaction")
     with get_connection(db_path) as connection:
-        account = connection.execute(
-            """
-            SELECT account_code
-            FROM financial_accounts
-            WHERE account_code = ?
-            """,
-            [request.account_code],
-        ).fetchone()
-        if account is None:
-            raise ValueError("Account code was not found.")
-
-        month_row = connection.execute(
-            """
-            SELECT *
-            FROM financial_monthly
-            WHERE account_code = ? AND fiscal_month = ?
-              AND COALESCE(fiscal_year, '') = ?
-            """,
-            [request.account_code, request.month_number, fiscal_year],
-        ).fetchone()
-        if month_row is None:
-            raise ValueError("Monthly account record was not found.")
+        for account_code in [main_account_code, counter_account_code]:
+            account = connection.execute(
+                "SELECT account_code FROM financial_accounts WHERE account_code = ?",
+                [account_code],
+            ).fetchone()
+            if account is None:
+                raise ValueError(f"Account code {account_code} was not found.")
+            month_row = connection.execute(
+                """
+                SELECT 1 FROM financial_monthly
+                WHERE account_code = ? AND fiscal_month = ?
+                  AND COALESCE(fiscal_year, '') = ?
+                """,
+                [account_code, request.month_number, fiscal_year],
+            ).fetchone()
+            if month_row is None:
+                raise ValueError(
+                    f"Monthly account record {account_code} was not found for fiscal year {fiscal_year}."
+                )
 
         next_number = connection.execute(
             """
@@ -160,17 +166,28 @@ def post_financial_transaction(db_path: Path, request: FinancialTransactionReque
             """
         ).fetchone()[0]
 
-        month_expense = float(month_row["month_expense"] or 0)
-        month_deposit = float(month_row["month_deposit"] or 0)
-        year_to_date = float(month_row["year_to_date"] or 0)
         code = TRANSACTION_TYPES[request.transaction_type]
-
-        if code in {"EX", "TF"}:
-            month_expense = round(month_expense + request.amount, 2)
-            year_to_date = round(year_to_date - request.amount, 2)
+        if code == "EX":
+            source_account_code = counter_account_code
+            destination_account_code = main_account_code
+            legs = [
+                (main_account_code, "expense", request.amount, 0.0, request.amount, 0.0),
+                (counter_account_code, "payment", request.amount, 0.0, -request.amount, request.amount),
+            ]
+        elif code == "RR":
+            source_account_code = main_account_code
+            destination_account_code = counter_account_code
+            legs = [
+                (main_account_code, "revenue", 0.0, request.amount, request.amount, 0.0),
+                (counter_account_code, "deposit", 0.0, request.amount, request.amount, 0.0),
+            ]
         else:
-            month_deposit = round(month_deposit + request.amount, 2)
-            year_to_date = round(year_to_date + request.amount, 2)
+            source_account_code = main_account_code
+            destination_account_code = counter_account_code
+            legs = [
+                (main_account_code, "transfer_from", request.amount, 0.0, -request.amount, request.amount),
+                (counter_account_code, "transfer_to", 0.0, request.amount, request.amount, 0.0),
+            ]
 
         connection.execute("BEGIN")
         connection.execute(
@@ -194,8 +211,10 @@ def post_financial_transaction(db_path: Path, request: FinancialTransactionReque
                 disposition,
                 transaction_type,
                 status,
+                source_account_code,
+                destination_account_code,
                 source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'app')
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'app')
             """,
             [
                 str(next_number),
@@ -204,7 +223,7 @@ def post_financial_transaction(db_path: Path, request: FinancialTransactionReque
                 request.transaction_date,
                 request.transaction_date,
                 str(request.month_number),
-                request.account_code,
+                main_account_code,
                 request.amount,
                 request.payee.strip(),
                 request.memo.strip(),
@@ -213,29 +232,217 @@ def post_financial_transaction(db_path: Path, request: FinancialTransactionReque
                 None,
                 request.payment_method.strip() or None,
                 None,
-                None,
+                counter_account_code,
                 code,
                 "C",
+                source_account_code,
+                destination_account_code,
             ],
-        )
-        connection.execute(
-            """
-            UPDATE financial_monthly
-            SET month_expense = ?, month_deposit = ?, year_to_date = ?
-            WHERE account_code = ? AND fiscal_month = ?
-              AND COALESCE(fiscal_year, '') = ?
-            """,
-            [
-                month_expense,
-                month_deposit,
-                year_to_date,
-                request.account_code,
-                request.month_number,
-                fiscal_year,
-            ],
-        )
+        ).lastrowid
+        transaction_id = int(connection.execute("SELECT last_insert_rowid()").fetchone()[0])
+        for account_code, role, expense, deposit, ytd, budget in legs:
+            _apply_financial_leg(
+                connection,
+                transaction_id=transaction_id,
+                account_code=account_code,
+                role=role,
+                fiscal_year=fiscal_year,
+                fiscal_month=request.month_number,
+                month_expense_change=expense,
+                month_deposit_change=deposit,
+                year_to_date_change=ytd,
+                budget_to_date_change=budget,
+            )
         connection.commit()
     return int(next_number)
+
+
+def _apply_financial_leg(
+    connection,
+    *,
+    transaction_id: int,
+    account_code: str,
+    role: str,
+    fiscal_year: str,
+    fiscal_month: int,
+    month_expense_change: float,
+    month_deposit_change: float,
+    year_to_date_change: float,
+    budget_to_date_change: float,
+) -> None:
+    connection.execute(
+        """
+        UPDATE financial_monthly
+        SET month_expense = ROUND(COALESCE(month_expense, 0) + ?, 2),
+            month_deposit = ROUND(COALESCE(month_deposit, 0) + ?, 2),
+            year_to_date = ROUND(COALESCE(year_to_date, 0) + ?, 2),
+            budget_to_date = ROUND(COALESCE(budget_to_date, 0) + ?, 2)
+        WHERE account_code = ? AND fiscal_month = ?
+          AND COALESCE(fiscal_year, '') = ?
+        """,
+        [
+            month_expense_change,
+            month_deposit_change,
+            year_to_date_change,
+            budget_to_date_change,
+            account_code,
+            fiscal_month,
+            fiscal_year,
+        ],
+    )
+    connection.execute(
+        """
+        INSERT INTO financial_transaction_legs (
+            transaction_id, account_code, role, month_expense_change,
+            month_deposit_change, year_to_date_change, budget_to_date_change
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            transaction_id,
+            account_code,
+            role,
+            round(month_expense_change, 2),
+            round(month_deposit_change, 2),
+            round(year_to_date_change, 2),
+            round(budget_to_date_change, 2),
+        ],
+    )
+
+
+def recode_financial_transaction(
+    db_path: Path,
+    transaction_number: str,
+    new_account_code: str,
+) -> int:
+    number = transaction_number.strip()
+    target_code = new_account_code.strip().upper()
+    if not number:
+        raise ValueError("Transaction number is required.")
+    if not target_code:
+        raise ValueError("Corrected account code is required.")
+    _make_backup(db_path, "recode_transaction")
+    with get_connection(db_path) as connection:
+        original = connection.execute(
+            """
+            SELECT * FROM financial_transactions
+            WHERE transaction_number = ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            [number],
+        ).fetchone()
+        if original is None:
+            raise ValueError("Transaction number was not found.")
+        if str(original["status"] or "").strip().upper() == "R":
+            raise ValueError("That transaction has already been recoded.")
+        old_code = str(original["account_code"] or "").strip().upper()
+        if not old_code:
+            raise ValueError("The original transaction has no account code to recode.")
+        if target_code == old_code:
+            raise ValueError("The corrected account is the same as the original account.")
+        target = connection.execute(
+            "SELECT 1 FROM financial_accounts WHERE account_code = ?",
+            [target_code],
+        ).fetchone()
+        if target is None:
+            raise ValueError("Corrected account code was not found.")
+
+        year = str(original["fiscal_year"] or "").strip()
+        month = int(original["month_number"] or 0)
+        target_month = connection.execute(
+            """
+            SELECT 1 FROM financial_monthly
+            WHERE account_code = ? AND fiscal_month = ? AND COALESCE(fiscal_year, '') = ?
+            """,
+            [target_code, month, year],
+        ).fetchone()
+        if target_month is None:
+            raise ValueError("Corrected account does not have a row in that fiscal period.")
+
+        original_leg = connection.execute(
+            """
+            SELECT * FROM financial_transaction_legs
+            WHERE transaction_id = ? AND account_code = ?
+            ORDER BY id LIMIT 1
+            """,
+            [original["id"], old_code],
+        ).fetchone()
+        amount = float(original["amount"] or 0)
+        type_code = str(original["transaction_type"] or "").strip().upper()
+        if original_leg is None:
+            if type_code == "RR":
+                changes = (0.0, amount, amount, 0.0)
+                role = "revenue"
+            else:
+                changes = (amount, 0.0, amount if type_code == "EX" else -amount, 0.0)
+                role = "expense" if type_code == "EX" else "transfer_from"
+        else:
+            changes = (
+                float(original_leg["month_expense_change"] or 0),
+                float(original_leg["month_deposit_change"] or 0),
+                float(original_leg["year_to_date_change"] or 0),
+                float(original_leg["budget_to_date_change"] or 0),
+            )
+            role = str(original_leg["role"] or "recode")
+
+        next_number = int(
+            connection.execute(
+                "SELECT COALESCE(MAX(CAST(transaction_number AS INTEGER)), 0) + 1 FROM financial_transactions"
+            ).fetchone()[0]
+        )
+        source_account_code = str(original["source_account_code"] or "").strip().upper()
+        destination_account_code = str(original["destination_account_code"] or "").strip().upper()
+        if type_code in {"RR", "TF"} and source_account_code == old_code:
+            source_account_code = target_code
+        if type_code == "EX" and destination_account_code == old_code:
+            destination_account_code = target_code
+        connection.execute("BEGIN")
+        correction_id = connection.execute(
+            """
+            INSERT INTO financial_transactions (
+                transaction_number, fiscal_year, month_number, entry_date,
+                transaction_date, month_code, account_code, amount, payee, memo,
+                transaction_type, status, source, source_account_code,
+                destination_account_code, correction_of_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'C', 'app', ?, ?, ?)
+            """,
+            [
+                str(next_number), year, month, date.today().isoformat(),
+                original["transaction_date"], str(month), target_code, amount,
+                f"RECODE NO {number}", f"OLD ACCOUNT CODE WAS {old_code}",
+                type_code, source_account_code,
+                destination_account_code, original["id"],
+            ],
+        ).lastrowid
+        _apply_financial_leg(
+            connection,
+            transaction_id=correction_id,
+            account_code=old_code,
+            role="recode_from",
+            fiscal_year=year,
+            fiscal_month=month,
+            month_expense_change=-changes[0],
+            month_deposit_change=-changes[1],
+            year_to_date_change=-changes[2],
+            budget_to_date_change=-changes[3],
+        )
+        _apply_financial_leg(
+            connection,
+            transaction_id=correction_id,
+            account_code=target_code,
+            role=f"recode_to_{role}",
+            fiscal_year=year,
+            fiscal_month=month,
+            month_expense_change=changes[0],
+            month_deposit_change=changes[1],
+            year_to_date_change=changes[2],
+            budget_to_date_change=changes[3],
+        )
+        connection.execute(
+            "UPDATE financial_transactions SET status = 'R' WHERE id = ?",
+            [original["id"]],
+        )
+        connection.commit()
+    return next_number
 
 
 def add_financial_account(db_path: Path, request: FinancialAccountRequest) -> None:
@@ -388,6 +595,53 @@ def update_financial_budget(db_path: Path, request: FinancialBudgetUpdateRequest
                 request.yearly_budget,
                 request.account_code.strip().upper(),
             ],
+        )
+        connection.commit()
+
+
+def update_financial_budget_distribution(
+    db_path: Path,
+    account_code: str,
+    fiscal_year: str,
+    monthly_amounts: list[float],
+) -> None:
+    if len(monthly_amounts) != 12:
+        raise ValueError("Enter one budget amount for each of the 12 months.")
+    if any(amount < 0 for amount in monthly_amounts):
+        raise ValueError("Budget amounts cannot be negative.")
+    code = account_code.strip().upper()
+    year = fiscal_year.strip()
+    total = round(sum(monthly_amounts), 2)
+    _make_backup(db_path, "budget_distribution")
+    with get_connection(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT fiscal_month FROM financial_monthly
+            WHERE account_code = ? AND COALESCE(fiscal_year, '') = ?
+            ORDER BY fiscal_month
+            """,
+            [code, year],
+        ).fetchall()
+        if len(rows) != 12:
+            raise ValueError("This account does not have all 12 fiscal-month rows.")
+        connection.execute("BEGIN")
+        for month, amount in enumerate(monthly_amounts, start=1):
+            connection.execute(
+                """
+                UPDATE financial_monthly
+                SET monthly_budget = ?, yearly_budget = ?
+                WHERE account_code = ? AND fiscal_month = ?
+                  AND COALESCE(fiscal_year, '') = ?
+                """,
+                [round(amount, 2), total, code, month, year],
+            )
+        connection.execute(
+            """
+            UPDATE financial_accounts
+            SET monthly_budget = ?, yearly_budget = ?
+            WHERE account_code = ?
+            """,
+            [round(total / 12, 2), total, code],
         )
         connection.commit()
 
@@ -656,7 +910,10 @@ def render_monthly_financial_report_pdf(
     )
     table = build_table(
         table_rows,
-        [0.55 * inch, 2.1 * inch, 1.0 * inch, 1.0 * inch, 0.95 * inch, 0.95 * inch, 0.95 * inch],
+        [0.55 * inch, 2.15 * inch, 1.15 * inch, 1.15 * inch, 1.1 * inch, 1.1 * inch, 1.1 * inch],
+        wrap_cells=True,
+        column_alignments=["LEFT", "LEFT", "RIGHT", "RIGHT", "RIGHT", "RIGHT", "RIGHT"],
+        font_size=8,
     )
     category_rows = [index for index, row in enumerate(table_rows) if row[1] == "" and index > 0]
     styles = [("ALIGN", (2, 1), (6, -1), "RIGHT")]
@@ -670,7 +927,13 @@ def render_monthly_financial_report_pdf(
         )
     table.setStyle(TableStyle(styles))
     story.append(table)
-    return build_story_pdf(output_path, story, title="Monthly Financial Report")
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Monthly Financial Report",
+        footer_text="Lake Lafayette Landowners Association - Monthly Financial Report",
+        page_size=landscape(LETTER),
+    )
 
 
 def render_transaction_log_pdf(
@@ -736,11 +999,20 @@ def render_transaction_log_pdf(
     )
     table = build_table(
         table_rows,
-        [0.42 * inch, 0.75 * inch, 0.45 * inch, 0.42 * inch, 0.65 * inch, 1.35 * inch, 1.8 * inch, 0.55 * inch, 0.5 * inch],
+        [0.42 * inch, 0.78 * inch, 0.5 * inch, 0.48 * inch, 0.72 * inch, 1.5 * inch, 2.75 * inch, 0.72 * inch, 0.72 * inch],
+        wrap_cells=True,
+        column_alignments=["LEFT", "LEFT", "LEFT", "LEFT", "RIGHT", "LEFT", "LEFT", "LEFT", "LEFT"],
+        font_size=7.5,
     )
     table.setStyle(TableStyle([("ALIGN", (4, 1), (4, -1), "RIGHT")]))
     story.append(table)
-    return build_story_pdf(output_path, story, title="Transaction Log")
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Transaction Log",
+        footer_text="Lake Lafayette Landowners Association - Transaction Log",
+        page_size=landscape(LETTER),
+    )
 
 
 def render_year_end_financial_report_pdf(db_path: Path, fiscal_year: str, output_dir: Path) -> Path:
@@ -782,7 +1054,12 @@ def render_year_end_financial_report_pdf(db_path: Path, fiscal_year: str, output
         )
 
     story = build_report_story("Year-End Financial Summary", [f"Fiscal year: {fiscal_year}"])
-    table = build_table(table_rows, [0.7 * inch, 3.1 * inch, 1.15 * inch, 1.15 * inch])
+    table = build_table(
+        table_rows,
+        [0.7 * inch, 3.1 * inch, 1.15 * inch, 1.15 * inch],
+        wrap_cells=True,
+        column_alignments=["LEFT", "LEFT", "RIGHT", "RIGHT"],
+    )
     category_rows = [index for index, row in enumerate(table_rows) if row[1] == "" and index > 0]
     styles = [("ALIGN", (2, 1), (3, -1), "RIGHT")]
     for index in category_rows:
@@ -795,7 +1072,12 @@ def render_year_end_financial_report_pdf(db_path: Path, fiscal_year: str, output
         )
     table.setStyle(TableStyle(styles))
     story.append(table)
-    return build_story_pdf(output_path, story, title="Year-End Financial Summary")
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Year-End Financial Summary",
+        footer_text="Lake Lafayette Landowners Association - Year-End Financial Summary",
+    )
 
 
 def render_budget_report_pdf(db_path: Path, fiscal_year: str, output_dir: Path) -> Path:
@@ -837,7 +1119,12 @@ def render_budget_report_pdf(db_path: Path, fiscal_year: str, output_dir: Path) 
         )
 
     story = build_report_story("Budget Report", [f"Fiscal year: {fiscal_year}"])
-    table = build_table(table_rows, [0.7 * inch, 3.1 * inch, 1.15 * inch, 1.15 * inch])
+    table = build_table(
+        table_rows,
+        [0.7 * inch, 3.1 * inch, 1.15 * inch, 1.15 * inch],
+        wrap_cells=True,
+        column_alignments=["LEFT", "LEFT", "RIGHT", "RIGHT"],
+    )
     category_rows = [index for index, row in enumerate(table_rows) if row[1] == "" and index > 0]
     styles = [("ALIGN", (2, 1), (3, -1), "RIGHT")]
     for index in category_rows:
@@ -850,4 +1137,9 @@ def render_budget_report_pdf(db_path: Path, fiscal_year: str, output_dir: Path) 
         )
     table.setStyle(TableStyle(styles))
     story.append(table)
-    return build_story_pdf(output_path, story, title="Budget Report")
+    return build_story_pdf(
+        output_path,
+        story,
+        title="Budget Report",
+        footer_text="Lake Lafayette Landowners Association - Budget Report",
+    )

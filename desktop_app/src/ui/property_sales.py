@@ -12,6 +12,7 @@ from src.services.property_sale_service import (
     default_sale_date,
     record_property_sale,
     render_property_sale_receipt_pdf,
+    render_property_sale_reversal_pdf,
     reverse_property_sale,
 )
 
@@ -432,6 +433,19 @@ class PropertySalesFrame(ttk.Frame):
             messagebox.showerror("Reverse sale failed", str(exc))
             return
 
+        pdf_output = None
+        try:
+            pdf_output = render_property_sale_reversal_pdf(
+                result,
+                self.selected_sale_group,
+                self.db_path.parent / "generated_reports",
+            )
+        except Exception as exc:
+            messagebox.showwarning(
+                "Sale reversed; receipt could not be created",
+                f"The sale reversal completed successfully.\n\nReceipt issue: {exc}",
+            )
+
         messagebox.showinfo(
             "Sale reversed",
             "\n".join(
@@ -443,6 +457,8 @@ class PropertySalesFrame(ttk.Frame):
                 ]
             ),
         )
+        if pdf_output is not None:
+            self._open_created_file(pdf_output, "Sale reversal preview failed")
         self.search_sellers()
         self.search_buyers()
         self.refresh_recent_sales()
